@@ -183,6 +183,19 @@ SmartCar/
 | `GET /dispatch/routes-geojson?service_date=` | 路線 GeoJSON |
 | `GET /dispatch/matrix?service_date=` · `GET /dispatch/osrm-health` | 矩陣預覽 / OSRM 探活 |
 | `GET /addresses` | 地址簿 |
+| `… /users`(列表/新增/刪除)· `PUT /users/{id}/password` | 使用者管理 |
+| `GET /reports/overview?date_from=&date_to=` | 營運報表彙總 |
+
+## 測試
+
+後端測試(pytest):
+```bash
+# 本機(容器內,使用執行中的 DB)
+docker compose exec backend python -m pytest -q
+# CI 會以全新 postgres service 跑:alembic upgrade head → pytest
+```
+測試位於 `backend/tests/`(匯入解析器單元測試 + API 整合測試)。
+CI 設定見 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
 ---
 
