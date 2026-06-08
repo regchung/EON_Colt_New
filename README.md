@@ -214,6 +214,31 @@ SmartCar/
 
 ---
 
+## 部署與版本控制
+
+### 從 GitHub 取得並啟動
+```bash
+git clone https://github.com/regchung/SmartCar.git
+cd SmartCar
+cp .env.example .env          # 填入 MAP8_API_KEY、改 SECRET_KEY 與管理員密碼
+docker compose up --build -d  # 起 db / backend / frontend
+make osrm-prepare && make osrm-up   # 準備並啟動路由引擎(排班/地圖需要)
+```
+
+### 機密管理(重要)
+- **`.env` 不進版控**(已列入 `.gitignore`)。`MAP8_API_KEY`、`SECRET_KEY`、管理員密碼只放這裡。
+- 切勿把 API 金鑰 / Token 貼進程式或 commit;範本一律用 `.env.example`(空值)。
+- 正式環境務必更換 `SECRET_KEY` 與 `ADMIN_PASSWORD`。
+
+### 推送變更
+```bash
+git add -A
+git commit -m "說明"
+git push                       # 需先完成 GitHub 認證
+```
+建議用 `gh auth login`(web 流程)設定認證,避免在指令或設定檔中放入 Personal Access Token。
+若用 Token,完成後請至 GitHub 撤銷,避免外流。
+
 ## 開源參考 / 進一步
 
 可參考的開源專案:[VROOM](https://github.com/VROOM-Project/vroom)、
