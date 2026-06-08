@@ -8,8 +8,22 @@ on:
 
 jobs:
   backend:
-    name: 後端(相依安裝 + 匯入檢查)
+    name: 後端(相依 + 測試)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: smartcar
+          POSTGRES_PASSWORD: smartcar_pw
+          POSTGRES_DB: smartcar
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U smartcar -d smartcar"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://smartcar:smartcar_pw@localhost:5432/smartcar
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,10 +31,13 @@ jobs:
           python-version: "3.12"
           cache: pip
       - name: 安裝相依
-        run: pip install -r backend/requirements.txt
-      - name: 匯入檢查(確保 app 可載入)
+        run: pip install -r backend/requirements.txt -r backend/requirements-dev.txt
+      - name: 套用 migration
         working-directory: backend
-        run: python -c "import app.main; print('backend import OK')"
+        run: alembic upgrade head
+      - name: 執行測試
+        working-directory: backend
+        run: pytest -q
 
   frontend:
     name: 前端(build)

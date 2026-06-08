@@ -1,5 +1,7 @@
 # SmartCar — 預約制車隊自動派遣系統
 
+[![CI](https://github.com/regchung/SmartCar/actions/workflows/ci.yml/badge.svg)](https://github.com/regchung/SmartCar/actions/workflows/ci.yml)
+
 取代人工派遣的車隊調度系統。訂單來自車行**批次匯入的預約單**,車種分**福祉車**與**一般車**,
 支援**包車與共乘**,可**每日批次排班**並在當天**動態插單/取消重排**,並以地圖呈現每車路線。
 
