@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+node_modules/
+dist/
+demo/solution.json
+osrm/data/
+osrm/prepare.log
+
+.claude/
