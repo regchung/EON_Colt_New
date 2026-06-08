@@ -31,6 +31,8 @@ const nav = [
   { to: '/drivers', label: '司機管理', icon: '🧑‍✈️' },
   { to: '/addresses', label: '地址簿', icon: '📍' },
   { to: '/map', label: '路線地圖', icon: '🗺️' },
+  { to: '/reports', label: '報表', icon: '📈' },
+  { to: '/users', label: '使用者管理', icon: '👥' },
 ]
 </script>
 

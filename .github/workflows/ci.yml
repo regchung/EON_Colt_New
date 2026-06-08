@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: 後端(相依安裝 + 匯入檢查)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: 安裝相依
+        run: pip install -r backend/requirements.txt
+      - name: 匯入檢查(確保 app 可載入)
+        working-directory: backend
+        run: python -c "import app.main; print('backend import OK')"
+
+  frontend:
+    name: 前端(build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: 安裝相依
+        working-directory: frontend
+        run: npm install
+      - name: 建置
+        working-directory: frontend
+        run: npm run build
+
+  docker-build:
+    name: Docker 映像建置
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 準備 .env
+        run: cp .env.example .env
+      - name: 建置映像(backend + frontend)
+        run: docker compose build backend frontend

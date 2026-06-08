@@ -13,6 +13,8 @@ from app.api.routes import (
     drivers,
     health,
     orders,
+    reports,
+    users,
     vehicles,
 )
 from app.core.config import settings
@@ -59,3 +61,5 @@ app.include_router(drivers.router, prefix=settings.API_PREFIX, dependencies=prot
 app.include_router(orders.router, prefix=settings.API_PREFIX, dependencies=protected)
 app.include_router(dispatch.router, prefix=settings.API_PREFIX, dependencies=protected)
 app.include_router(addresses.router, prefix=settings.API_PREFIX, dependencies=protected)
+app.include_router(users.router, prefix=settings.API_PREFIX)
+app.include_router(reports.router, prefix=settings.API_PREFIX)

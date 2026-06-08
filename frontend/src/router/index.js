@@ -6,6 +6,8 @@ import Vehicles from '../views/Vehicles.vue'
 import Drivers from '../views/Drivers.vue'
 import Addresses from '../views/Addresses.vue'
 import RouteMap from '../views/RouteMap.vue'
+import Reports from '../views/Reports.vue'
+import Users from '../views/Users.vue'
 import Login from '../views/Login.vue'
 
 const routes = [
@@ -15,6 +17,8 @@ const routes = [
   { path: '/drivers', name: 'drivers', component: Drivers, meta: { title: '司機管理' } },
   { path: '/addresses', name: 'addresses', component: Addresses, meta: { title: '地址簿' } },
   { path: '/map', name: 'map', component: RouteMap, meta: { title: '路線地圖' } },
+  { path: '/reports', name: 'reports', component: Reports, meta: { title: '報表' } },
+  { path: '/users', name: 'users', component: Users, meta: { title: '使用者管理' } },
   { path: '/login', name: 'login', component: Login, meta: { public: true, layout: false } },
 ]
 
