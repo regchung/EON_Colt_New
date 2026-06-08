@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main]
 
+# 暫時消除 Node20 actions 淘汰警告(2026-06 後預設 Node24)
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   backend:
     name: 後端(相依 + 測試)
