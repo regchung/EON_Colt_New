@@ -1,7 +1,8 @@
+import json
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -59,43 +60,73 @@ def download_template():
     )
 
 
+def _sse(data: dict) -> str:
+    return f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+
 @router.post("/import")
 async def import_orders(
     file: UploadFile = File(...),
-    geocode: bool = True,
     db: Session = Depends(get_db),
 ):
-    """批次匯入車行訂單(.xlsx / .csv)。預設匯入後自動地理編碼(走地址簿快取)。"""
+    """批次匯入車行訂單(.xlsx / .csv)，以 SSE 串流回傳逐列進度。"""
     content = await file.read()
-    try:
-        payloads, errors = parse_orders(file.filename or "", content)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    filename = file.filename or ""
 
-    created_orders: list[Order] = []
-    for i, payload in enumerate(payloads):
+    async def generate():
+        # 解析檔案
         try:
-            created_orders.append(crud.create(db, OrderCreate(**payload)))
-        except (ValidationError, Exception) as e:  # noqa: BLE001
-            errors.append({"row": f"payload#{i + 1}", "error": str(e)})
+            payloads, errors = parse_orders(filename, content)
+        except ValueError as e:
+            yield _sse({"type": "error", "message": str(e)})
+            return
 
-    geocoded = {"done": 0, "failed": 0}
-    if geocode:
-        for o in created_orders:
-            r = _geocode_order(db, o)
-            if r["pickup"]["found"] and r["dropoff"]["found"]:
-                geocoded["done"] += 1
-            else:
-                geocoded["failed"] += 1
+        total = len(payloads) + len(errors)
+        yield _sse({"type": "start", "total": total, "filename": filename})
 
-    return {
-        "filename": file.filename,
-        "total_rows": len(payloads) + len([e for e in errors if isinstance(e.get("row"), int)]),
-        "created": len(created_orders),
-        "failed": len(errors),
-        "geocoded": geocoded if geocode else None,
-        "errors": errors,
-    }
+        created_orders: list[Order] = []
+        created = 0
+
+        # 逐列寫入 DB
+        for i, payload in enumerate(payloads):
+            try:
+                order = crud.create(db, OrderCreate(**payload))
+                created_orders.append(order)
+                created += 1
+            except (ValidationError, Exception) as e:  # noqa: BLE001
+                errors.append({"row": f"payload#{i + 1}", "error": str(e)})
+            yield _sse({"type": "progress", "phase": "import",
+                        "current": i + 1, "total": len(payloads),
+                        "created": created})
+
+        # 地理編碼（逐筆串流進度）
+        geo_done = 0
+        geo_failed = 0
+        geo_total = len(created_orders)
+        if geo_total:
+            yield _sse({"type": "geocode_start", "total": geo_total})
+            for idx, o in enumerate(created_orders):
+                r = _geocode_order(db, o)
+                if r["pickup"]["found"] and r["dropoff"]["found"]:
+                    geo_done += 1
+                else:
+                    geo_failed += 1
+                yield _sse({"type": "progress", "phase": "geocode",
+                            "current": idx + 1, "total": geo_total,
+                            "done": geo_done, "failed": geo_failed})
+
+        yield _sse({
+            "type": "done",
+            "filename": filename,
+            "total_rows": total,
+            "created": created,
+            "failed": len(errors),
+            "geocoded": {"done": geo_done, "failed": geo_failed},
+            "errors": errors,
+        })
+
+    return StreamingResponse(generate(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 def _geocode_order(db: Session, o: Order) -> dict:

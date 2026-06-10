@@ -21,14 +21,15 @@ function fmtEta(eta) {
 const fileInput = ref(null)
 const importing = ref(false)
 const importReport = ref(null)
+const importProgress = ref(null) // { phase, current, total, created, geo_done, geo_failed }
 
 function pickFile() {
   importReport.value = null
+  importProgress.value = null
   fileInput.value?.click()
 }
 
 async function downloadTemplate() {
-  // 需帶 JWT,故用 axios 取 blob 再觸發下載(不能用純 <a href>)
   const { data } = await client.get('/orders/import/template', { responseType: 'blob' })
   const url = URL.createObjectURL(data)
   const a = document.createElement('a')
@@ -39,24 +40,68 @@ async function downloadTemplate() {
   a.remove()
   URL.revokeObjectURL(url)
 }
+
 async function onFileChosen(e) {
   const file = e.target.files?.[0]
   if (!file) return
   importing.value = true
   importReport.value = null
+  importProgress.value = { phase: 'import', current: 0, total: 0, created: 0, geo_done: 0, geo_failed: 0 }
+
   try {
     const fd = new FormData()
     fd.append('file', file)
-    const { data } = await client.post('/orders/import', fd, {
-      headers: { 'Content-Type': 'multipart/form-data' },
+    const token = localStorage.getItem('token')
+    const resp = await fetch('/api/orders/import', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
     })
-    importReport.value = data
-    await store.fetchAll()
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      importReport.value = { error: err.detail || `HTTP ${resp.status}` }
+      return
+    }
+
+    const reader = resp.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      const lines = buf.split('\n')
+      buf = lines.pop() // 保留未完整的行
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const ev = JSON.parse(line.slice(6))
+          if (ev.type === 'start') {
+            importProgress.value = { phase: 'import', current: 0, total: ev.total, created: 0, geo_done: 0, geo_failed: 0 }
+          } else if (ev.type === 'progress' && ev.phase === 'import') {
+            importProgress.value = { ...importProgress.value, phase: 'import', current: ev.current, total: ev.total, created: ev.created }
+          } else if (ev.type === 'geocode_start') {
+            importProgress.value = { ...importProgress.value, phase: 'geocode', current: 0, total: ev.total }
+          } else if (ev.type === 'progress' && ev.phase === 'geocode') {
+            importProgress.value = { ...importProgress.value, phase: 'geocode', current: ev.current, total: ev.total, geo_done: ev.done, geo_failed: ev.failed }
+          } else if (ev.type === 'done') {
+            importReport.value = ev
+            importProgress.value = null
+            await store.fetchAll()
+          } else if (ev.type === 'error') {
+            importReport.value = { error: ev.message }
+            importProgress.value = null
+          }
+        } catch { /* 忽略解析錯誤 */ }
+      }
+    }
   } catch (err) {
-    importReport.value = { error: err?.response?.data?.detail || err.message }
+    importReport.value = { error: err.message || '匯入失敗' }
+    importProgress.value = null
   } finally {
     importing.value = false
-    e.target.value = '' // 允許重複選同一檔
+    e.target.value = ''
   }
 }
 
@@ -219,6 +264,32 @@ async function setStatus(o, value) {
       class="d-none"
       @change="onFileChosen"
     />
+  </div>
+
+  <!-- 匯入進度條 -->
+  <div v-if="importProgress" class="card mb-3 border-primary">
+    <div class="card-body py-2">
+      <div class="d-flex justify-content-between small mb-1">
+        <span>
+          <span v-if="importProgress.phase === 'import'">
+            📥 匯入中… {{ importProgress.current }} / {{ importProgress.total }} 列
+            （已建立 {{ importProgress.created }} 筆）
+          </span>
+          <span v-else>
+            📍 地理編碼中… {{ importProgress.current }} / {{ importProgress.total }} 筆
+            （成功 {{ importProgress.geo_done }}・失敗 {{ importProgress.geo_failed }}）
+          </span>
+        </span>
+        <span class="text-muted">{{ importProgress.total ? Math.round(importProgress.current / importProgress.total * 100) : 0 }}%</span>
+      </div>
+      <div class="progress" style="height:8px">
+        <div
+          class="progress-bar progress-bar-striped progress-bar-animated"
+          :class="importProgress.phase === 'geocode' ? 'bg-info' : 'bg-primary'"
+          :style="{ width: (importProgress.total ? importProgress.current / importProgress.total * 100 : 0) + '%' }"
+        ></div>
+      </div>
+    </div>
   </div>
 
   <!-- 匯入報告 -->
