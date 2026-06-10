@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     MATRIX_PROVIDER: str = "osrm"
     OSRM_URL: str = "http://osrm:5000"
 
+    # AI 派遣(Claude API)
+    ANTHROPIC_API_KEY: str = ""
+    AI_DISPATCH_MODEL: str = "claude-haiku-4-5-20251001"   # 快速、低成本
+
     # 認證(JWT)
     SECRET_KEY: str = "change-me-in-production-please"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 720

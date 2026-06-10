@@ -10,6 +10,7 @@ from app.api.routes import (
     auth,
     config,
     dispatch,
+    driver,
     drivers,
     health,
     orders,
@@ -32,6 +33,7 @@ async def lifespan(app: FastAPI):
             db.add(User(
                 username=settings.ADMIN_USERNAME,
                 hashed_password=hash_password(settings.ADMIN_PASSWORD),
+                role="admin",
             ))
             db.commit()
     finally:
@@ -63,3 +65,4 @@ app.include_router(dispatch.router, prefix=settings.API_PREFIX, dependencies=pro
 app.include_router(addresses.router, prefix=settings.API_PREFIX, dependencies=protected)
 app.include_router(users.router, prefix=settings.API_PREFIX)
 app.include_router(reports.router, prefix=settings.API_PREFIX)
+app.include_router(driver.router, prefix=settings.API_PREFIX, dependencies=protected)

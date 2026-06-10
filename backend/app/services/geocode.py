@@ -79,13 +79,26 @@ def _nominatim_geocode(address: str) -> dict | None:
     return None
 
 
-def _provider_geocode(address: str) -> dict | None:
+def _normalize_address(address: str) -> str:
+    """如果使用 Map8，先正規化地址再編碼；失敗則沿用原始輸入。"""
     if settings.GEOCODER_PROVIDER == "map8" and settings.MAP8_API_KEY:
         try:
-            return map8.geocode_address(address)
+            normalized = map8.standardize_address(address)
+            if normalized:
+                return normalized.strip()
+        except Exception:  # noqa: BLE001
+            pass
+    return address
+
+
+def _provider_geocode(address: str) -> dict | None:
+    normalized = _normalize_address(address)
+    if settings.GEOCODER_PROVIDER == "map8" and settings.MAP8_API_KEY:
+        try:
+            return map8.geocode_address(normalized)
         except Exception:  # noqa: BLE001
             return None
-    return _nominatim_geocode(address)
+    return _nominatim_geocode(normalized)
 
 
 # --- 對外:DB 優先地理編碼 --------------------------------------------------

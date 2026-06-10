@@ -80,6 +80,27 @@ def _parse_geocode(data) -> dict | None:
     }
 
 
+# --- 地址正規化 -------------------------------------------------------------
+
+def standardize_address(address: str) -> str | None:
+    """呼叫 Map8 /address/standardization 清洗地址，回傳正規化後地址字串（失敗回 None）。"""
+    key = _require_key()
+    params = urllib.parse.urlencode({"key": key, "address": address})
+    url = f"{settings.MAP8_BASE_URL}/v2/place/standardization/json?{params}"
+    try:
+        data = _get_json(url)
+    except Exception:  # noqa: BLE001
+        return None
+
+    # 回應格式：{"results":[{"formatted_address":"..."}]} 或 {"standardizedAddress":"..."}
+    if isinstance(data, dict):
+        results = data.get("results")
+        if results and isinstance(results, list):
+            return results[0].get("formatted_address") or results[0].get("address")
+        return data.get("standardizedAddress") or data.get("formatted_address")
+    return None
+
+
 # --- 距離矩陣(供排班用)-----------------------------------------------------
 
 def distance_matrix(points: list[tuple[float, float]], transport: str = "car") -> dict:

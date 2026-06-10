@@ -1,6 +1,7 @@
 <script setup>
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 import { computed, watch } from 'vue'
+
 import { Offcanvas } from 'bootstrap'
 import { useAuthStore } from '../stores/auth'
 
@@ -24,16 +25,21 @@ function logout() {
   router.push('/login')
 }
 
-const nav = [
-  { to: '/', label: '儀表板', icon: '📊' },
-  { to: '/orders', label: '訂單管理', icon: '📋' },
-  { to: '/vehicles', label: '車輛管理', icon: '🚐' },
-  { to: '/drivers', label: '司機管理', icon: '🧑‍✈️' },
-  { to: '/addresses', label: '地址簿', icon: '📍' },
-  { to: '/map', label: '路線地圖', icon: '🗺️' },
-  { to: '/reports', label: '報表', icon: '📈' },
-  { to: '/users', label: '使用者管理', icon: '👥' },
+const allNav = [
+  { to: '/', label: '儀表板', icon: '📊', roles: null },
+  { to: '/driver-route', label: '我的路單', icon: '🗒️', roles: ['driver'] },
+  { to: '/orders', label: '訂單管理', icon: '📋', roles: ['admin', 'dispatcher'] },
+  { to: '/vehicles', label: '車輛管理', icon: '🚐', roles: ['admin', 'dispatcher'] },
+  { to: '/drivers', label: '司機管理', icon: '🧑‍✈️', roles: ['admin', 'dispatcher'] },
+  { to: '/addresses', label: '地址簿', icon: '📍', roles: ['admin', 'dispatcher'] },
+  { to: '/map', label: '路線地圖', icon: '🗺️', roles: null },
+  { to: '/reports', label: '報表', icon: '📈', roles: ['admin', 'dispatcher'] },
+  { to: '/users', label: '使用者管理', icon: '👥', roles: ['admin'] },
 ]
+
+const nav = computed(() =>
+  allNav.filter((item) => !item.roles || item.roles.includes(auth.role))
+)
 </script>
 
 <template>

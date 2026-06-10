@@ -1,29 +1,36 @@
-"""使用者管理(需登入)。"""
+"""使用者管理(需管理員)。"""
 from datetime import datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user
+from app.api.deps import require_admin
 from app.core.security import hash_password
 from app.db.session import get_db
 from app.models.user import User
 
-router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(get_current_user)])
+router = APIRouter(prefix="/users", tags=["users"], dependencies=[Depends(require_admin)])
+
+RoleType = Literal["admin", "dispatcher", "driver"]
 
 
 class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int
     username: str
+    role: str
+    vehicle_id: int | None
     created_at: datetime
 
 
 class UserCreate(BaseModel):
     username: str
     password: str
+    role: RoleType = "admin"
+    vehicle_id: int | None = None
 
 
 class PasswordUpdate(BaseModel):
@@ -41,7 +48,12 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="帳號不可空白,密碼至少 4 碼")
     if db.scalar(select(User).where(User.username == payload.username)):
         raise HTTPException(status_code=409, detail="帳號已存在")
-    user = User(username=payload.username.strip(), hashed_password=hash_password(payload.password))
+    user = User(
+        username=payload.username.strip(),
+        hashed_password=hash_password(payload.password),
+        role=payload.role,
+        vehicle_id=payload.vehicle_id,
+    )
     db.add(user)
     db.commit()
     db.refresh(user)

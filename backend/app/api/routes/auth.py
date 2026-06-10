@@ -21,6 +21,7 @@ class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
     username: str
+    role: str
 
 
 @router.post("/login", response_model=TokenOut)
@@ -28,9 +29,13 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.username == payload.username))
     if not user or not verify_password(payload.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="帳號或密碼錯誤")
-    return TokenOut(access_token=create_access_token(user.username), username=user.username)
+    return TokenOut(
+        access_token=create_access_token(user.username),
+        username=user.username,
+        role=user.role,
+    )
 
 
 @router.get("/me")
-def me(current: str = Depends(get_current_user)):
-    return {"username": current}
+def me(current: User = Depends(get_current_user)):
+    return {"username": current.username, "role": current.role}

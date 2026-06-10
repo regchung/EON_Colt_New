@@ -10,3 +10,4 @@ openpyxl==3.1.5
 pyvroom==1.15.2
 numpy==2.2.1
 pandas==2.2.3
+httpx==0.28.1

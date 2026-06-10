@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.order import Order
 from app.models.route import RouteStop
-from app.services import dispatcher, matrix, osrm
+from app.services import ai_dispatch, dispatcher, matrix, osrm
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
 
@@ -18,12 +18,98 @@ _COLORS = ["#e6194B", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f
 
 
 @router.post("/run")
-def run(service_date: date, db: Session = Depends(get_db)):
-    """對某日訂單執行 VROOM 自動排班,寫回派遣結果並回傳路線報告。"""
+def run(service_date: date, ai: bool = False, db: Session = Depends(get_db)):
+    """對某日訂單執行 VROOM 自動排班，寫回派遣結果並回傳路線報告。
+    ai=true 時額外呼叫 Claude 產出 AI 分析摘要。
+    """
     result = dispatcher.run_dispatch(db, service_date)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
+    if ai:
+        result["ai_summary"] = ai_dispatch.analyze_dispatch(result)
     return result
+
+
+@router.post("/ai-analyze")
+def ai_analyze(service_date: date, db: Session = Depends(get_db)):
+    """對最近一次排班結果（已存於 DB）呼叫 AI 分析，不重新排班。"""
+    from sqlalchemy import select as sa_select
+    from app.models.vehicle import Vehicle
+
+    orders_dispatched = list(db.scalars(
+        sa_select(Order)
+        .where(Order.service_date == service_date, Order.status == "scheduled")
+    ).all())
+    orders_unassigned = list(db.scalars(
+        sa_select(Order)
+        .where(Order.service_date == service_date, Order.status == "imported")
+        .where(Order.pickup_lng.is_not(None))
+    ).all())
+
+    if not orders_dispatched and not orders_unassigned:
+        raise HTTPException(status_code=404, detail="該日無排班資料")
+
+    # 組 routes dict（簡化版）
+    routes: dict = {}
+    for o in orders_dispatched:
+        vid = str(o.assigned_vehicle_id)
+        routes.setdefault(vid, [])
+        routes[vid].append({
+            "order_id": o.id, "type": "上車",
+            "eta": o.eta.strftime("%H:%M") if o.eta else "--",
+        })
+
+    pseudo_result = {
+        "service_date": service_date.isoformat(),
+        "vehicles_used": len(routes),
+        "orders_total": len(orders_dispatched) + len(orders_unassigned),
+        "assigned": len(orders_dispatched),
+        "unassigned": [o.id for o in orders_unassigned],
+        "skipped_no_coords": [],
+        "total_duration_sec": 0,
+        "routes": routes,
+    }
+    summary = ai_dispatch.analyze_dispatch(pseudo_result)
+    return {"service_date": service_date.isoformat(), "ai_summary": summary}
+
+
+@router.post("/ai-insert")
+def ai_insert_eval(
+    order_id: int,
+    service_date: date,
+    db: Session = Depends(get_db),
+):
+    """評估將指定訂單插入現有排班哪台車最合適（AI 建議）。"""
+    from sqlalchemy import select as sa_select
+
+    order = db.get(Order, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="訂單不存在")
+
+    dispatched = list(db.scalars(
+        sa_select(Order)
+        .where(Order.service_date == service_date, Order.status == "scheduled")
+    ).all())
+
+    routes: dict = {}
+    for o in dispatched:
+        vid = str(o.assigned_vehicle_id)
+        routes.setdefault(vid, [])
+        routes[vid].append({
+            "order_id": o.id, "type": "上車",
+            "eta": o.eta.strftime("%H:%M") if o.eta else "--",
+        })
+
+    new_order_info = {
+        "pickup_address": order.pickup_address,
+        "dropoff_address": order.dropoff_address,
+        "pickup_time": str(order.pickup_time),
+        "vehicle_type": order.vehicle_type,
+        "pax": order.pax,
+        "need_wheelchair": order.need_wheelchair,
+    }
+    suggestion = ai_dispatch.evaluate_insertion(new_order_info, routes)
+    return {"order_id": order_id, "ai_suggestion": suggestion}
 
 
 @router.get("/osrm-health")

@@ -24,6 +24,19 @@ async function load() {
 }
 onMounted(load)
 
+async function exportCsv() {
+  const res = await client.get('/reports/export-csv', {
+    params: { date_from: dateFrom.value, date_to: dateTo.value },
+    responseType: 'blob',
+  })
+  const url = URL.createObjectURL(res.data)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `smartcar_${dateFrom.value}_${dateTo.value}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 const maxDay = computed(() =>
   data.value ? Math.max(1, ...data.value.by_day.map((d) => d.total)) : 1
 )
@@ -39,6 +52,7 @@ function pct(n, total) {
     <div><label class="form-label mb-1 small">迄</label>
       <input v-model="dateTo" type="date" class="form-control form-control-sm" style="width:160px" /></div>
     <button class="btn btn-sm btn-primary" :disabled="loading" @click="load">{{ loading ? '查詢中…' : '查詢' }}</button>
+    <button class="btn btn-sm btn-outline-secondary" @click="exportCsv">⬇ 匯出 CSV</button>
   </div>
 
   <template v-if="data">

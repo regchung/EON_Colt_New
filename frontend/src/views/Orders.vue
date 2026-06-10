@@ -85,6 +85,7 @@ function hasCoords(o) {
 // --- 一鍵排班 ---
 const dispatching = ref(false)
 const dispatchReport = ref(null)
+const aiAnalyzing = ref(false)
 
 async function runDispatch() {
   const sd = filters.service_date || new Date().toISOString().slice(0, 10)
@@ -98,6 +99,23 @@ async function runDispatch() {
     dispatchReport.value = { error: err?.response?.data?.detail || err.message }
   } finally {
     dispatching.value = false
+  }
+}
+
+async function runAiAnalyze() {
+  const sd = filters.service_date || new Date().toISOString().slice(0, 10)
+  aiAnalyzing.value = true
+  try {
+    const { data } = await client.post('/dispatch/ai-analyze', null, { params: { service_date: sd } })
+    if (dispatchReport.value) {
+      dispatchReport.value.ai_summary = data.ai_summary
+    } else {
+      dispatchReport.value = { ai_summary: data.ai_summary, _ai_only: true }
+    }
+  } catch (err) {
+    alert(err?.response?.data?.detail || 'AI 分析失敗')
+  } finally {
+    aiAnalyzing.value = false
   }
 }
 
@@ -237,7 +255,14 @@ async function setStatus(o, value) {
   <div v-if="dispatchReport" class="card border-warning mb-3">
     <div class="card-header bg-warning-subtle d-flex justify-content-between align-items-center">
       <strong>🚀 排班結果</strong>
-      <button type="button" class="btn-close" @click="dispatchReport = null"></button>
+      <div class="d-flex gap-2 align-items-center">
+        <button
+          class="btn btn-sm btn-outline-primary"
+          :disabled="aiAnalyzing"
+          @click="runAiAnalyze"
+        >{{ aiAnalyzing ? '🤖 分析中…' : '🤖 AI 分析' }}</button>
+        <button type="button" class="btn-close" @click="dispatchReport = null"></button>
+      </div>
     </div>
     <div class="card-body">
       <template v-if="dispatchReport.error">
@@ -254,6 +279,9 @@ async function setStatus(o, value) {
         </p>
         <div v-if="dispatchReport.unassigned?.length" class="alert alert-warning py-1 px-2 small">
           未派訂單(可能超出班別/座位/時間窗):#{{ dispatchReport.unassigned.join(', #') }}
+        </div>
+        <div v-if="dispatchReport.ai_summary" class="alert alert-info small mb-2" style="white-space:pre-wrap">
+          🤖 <strong>AI 分析</strong><br>{{ dispatchReport.ai_summary }}
         </div>
         <div class="row g-3">
           <div v-for="(stops, vid) in dispatchReport.routes" :key="vid" class="col-12 col-lg-6">

@@ -20,6 +20,7 @@ def seed_admin():
             db.add(User(
                 username=settings.ADMIN_USERNAME,
                 hashed_password=hash_password(settings.ADMIN_PASSWORD),
+                role="admin",
             ))
             db.commit()
     finally:

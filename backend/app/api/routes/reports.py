@@ -1,7 +1,10 @@
 """營運報表彙總(需登入)。"""
+import csv
+import io
 from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -74,6 +77,8 @@ def overview(
 
     assigned = sum(v["orders"] for v in per_vehicle)
 
+    dispatch_rate = round(assigned / total * 100, 1) if total else 0
+
     return {
         "date_from": date_from.isoformat(),
         "date_to": date_to.isoformat(),
@@ -85,8 +90,61 @@ def overview(
             "vehicles_total": db.scalar(select(func.count()).select_from(Vehicle)) or 0,
             "drivers": db.scalar(select(func.count()).select_from(Driver)) or 0,
         },
+        "dispatch_rate": dispatch_rate,
         "by_status": by_status,
         "by_vehicle_type": by_vehicle_type,
         "by_day": by_day,
         "per_vehicle": per_vehicle,
     }
+
+
+@router.get("/export-csv")
+def export_csv(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    db: Session = Depends(get_db),
+):
+    """匯出區間訂單明細為 CSV（走 JWT，需 axios blob）。"""
+    if date_to is None:
+        date_to = date.today()
+    if date_from is None:
+        date_from = date_to - timedelta(days=13)
+
+    orders = list(db.scalars(
+        select(Order)
+        .where(Order.service_date >= date_from, Order.service_date <= date_to)
+        .order_by(Order.service_date, Order.id)
+    ).all())
+
+    vehicle_names = dict(db.execute(select(Vehicle.id, Vehicle.plate)).all())
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow([
+        "訂單ID", "服務日期", "乘客姓名", "電話",
+        "上車地址", "下車地址", "上車時間", "人數",
+        "車種", "需輪椅", "允許共乘",
+        "狀態", "指派車牌", "派遣順序", "ETA", "備註",
+    ])
+    for o in orders:
+        writer.writerow([
+            o.id, o.service_date.isoformat(), o.passenger_name or "", o.passenger_phone or "",
+            o.pickup_address, o.dropoff_address,
+            o.pickup_time.strftime("%H:%M") if o.pickup_time else "",
+            o.pax, o.vehicle_type,
+            "是" if o.need_wheelchair else "否",
+            "是" if o.allow_pool else "否",
+            o.status,
+            vehicle_names.get(o.assigned_vehicle_id, "") if o.assigned_vehicle_id else "",
+            o.dispatch_seq or "",
+            o.eta.strftime("%H:%M") if o.eta else "",
+            o.note or "",
+        ])
+
+    buf.seek(0)
+    filename = f"smartcar_{date_from}_{date_to}.csv"
+    return StreamingResponse(
+        iter([buf.getvalue().encode("utf-8-sig")]),  # utf-8-sig 讓 Excel 正確顯示中文
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
