@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.order import Order
 from app.models.route import RouteStop
-from app.services import ai_dispatch, dispatcher, matrix, osrm
+from app.services import ai_dispatch, dispatcher, matrix, osrm, zone_affinity
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
 
@@ -28,6 +28,18 @@ def run(service_date: date, ai: bool = False, db: Session = Depends(get_db)):
     if ai:
         result["ai_summary"] = ai_dispatch.analyze_dispatch(result)
     return result
+
+
+@router.post("/zone-suggest")
+def zone_suggest(order_id: int, service_date: date, db: Session = Depends(get_db)):
+    """區域親和建議:同區新單優先推薦給今天已在該區的司機(dry-run,不寫入)。
+
+    硬條件(車種/輪椅、座位)在排名前過濾;時間窗精確可行性由實際排班確認。
+    """
+    order = db.get(Order, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="訂單不存在")
+    return zone_affinity.suggest(db, order, service_date)
 
 
 @router.post("/ai-analyze")

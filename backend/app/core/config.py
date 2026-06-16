@@ -31,6 +31,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     AI_DISPATCH_MODEL: str = "claude-haiku-4-5-20251001"   # 快速、低成本
 
+    # 區域親和(Zone Affinity)派遣偏好 — 同區新單優先給已在該區的司機
+    ZONE_AFFINITY_ENABLED: bool = True
+    ZONE_MIN_JOBS_N: int = 2          # 司機在該區達 N 筆才觸發「優先」
+    ZONE_MAX_JOBS_PER_ZONE: int = 6   # 每車每區上限,避免過載失衡
+
     # 認證(JWT)
     SECRET_KEY: str = "change-me-in-production-please"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 720
