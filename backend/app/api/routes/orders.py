@@ -6,7 +6,7 @@ from fastapi.responses import Response, StreamingResponse
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from app.core.config import settings
 from app.crud.order import order as crud
@@ -173,6 +173,31 @@ def geocode_pending(limit: int | None = None, db: Session = Depends(get_db)):
         "failed": failed,
         "results": results,
     }
+
+
+from app.models.vehicle import Vehicle  # noqa: E402
+
+
+@router.post("/{id}/assign", response_model=OrderOut)
+def assign_order(id: int, vehicle_id: int, db: Session = Depends(get_db)):
+    """手動指派訂單給指定車輛(採用區域親和建議用)。狀態轉為 scheduled。"""
+    o = crud.get(db, id)
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    v = db.get(Vehicle, vehicle_id)
+    if not v:
+        raise HTTPException(status_code=404, detail="車輛不存在")
+    # 該車當日下一個派遣順序
+    next_seq = (db.scalar(
+        select(func.max(Order.dispatch_seq))
+        .where(Order.assigned_vehicle_id == vehicle_id, Order.service_date == o.service_date)
+    ) or 0) + 1
+    o.assigned_vehicle_id = vehicle_id
+    o.status = "scheduled"
+    o.dispatch_seq = next_seq
+    db.commit()
+    db.refresh(o)
+    return o
 
 
 ALLOWED_STATUS = {"imported", "scheduled", "ongoing", "done", "canceled"}

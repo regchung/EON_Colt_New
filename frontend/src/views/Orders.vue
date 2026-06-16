@@ -239,6 +239,25 @@ async function setStatus(o, value) {
   await client.post(`/orders/${o.id}/status`, null, { params: { value } })
   await store.fetchAll(filters.service_date ? { service_date: filters.service_date } : {})
 }
+
+// --- 區域親和建議 ---
+const zoneSuggest = ref(null)   // { order, data, loading }
+async function suggestZone(o) {
+  zoneSuggest.value = { order: o, data: null, loading: true }
+  try {
+    const { data } = await client.post('/dispatch/zone-suggest', null, {
+      params: { order_id: o.id, service_date: o.service_date },
+    })
+    zoneSuggest.value = { order: o, data, loading: false }
+  } catch (err) {
+    zoneSuggest.value = { order: o, data: { error: err?.response?.data?.detail || err.message }, loading: false }
+  }
+}
+async function adoptVehicle(orderId, vehicleId) {
+  await client.post(`/orders/${orderId}/assign`, null, { params: { vehicle_id: vehicleId } })
+  zoneSuggest.value = null
+  await store.fetchAll(filters.service_date ? { service_date: filters.service_date } : {})
+}
 </script>
 
 <template>
@@ -489,6 +508,49 @@ async function setStatus(o, value) {
     </div>
   </div>
 
+  <!-- 區域親和建議 modal -->
+  <div v-if="zoneSuggest" class="zone-overlay" @click.self="zoneSuggest = null">
+    <div class="card shadow zone-card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>🧭 區域親和建議 — 訂單 #{{ zoneSuggest.order.id }}</strong>
+        <button class="btn-close" @click="zoneSuggest = null"></button>
+      </div>
+      <div class="card-body">
+        <div v-if="zoneSuggest.loading" class="text-muted">查詢中…</div>
+        <div v-else-if="zoneSuggest.data?.error" class="alert alert-danger py-2">{{ zoneSuggest.data.error }}</div>
+        <template v-else>
+          <p class="mb-2">
+            區域:<span class="badge bg-secondary">{{ zoneSuggest.data.zone || '未知' }}</span>
+            <span v-if="zoneSuggest.data.affinity_triggered" class="badge bg-success ms-1">親和觸發</span>
+            <span v-else class="badge bg-light text-dark ms-1">未觸發</span>
+          </p>
+          <div class="alert alert-info py-2 small">{{ zoneSuggest.data.explanation }}</div>
+          <table class="table table-sm align-middle mb-2">
+            <thead><tr><th>車輛</th><th>車種</th><th>該區</th><th>當日</th><th>可行</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="s in zoneSuggest.data.suggestions" :key="s.vehicle_id"
+                  :class="{ 'table-success': zoneSuggest.data.recommended && s.vehicle_id === zoneSuggest.data.recommended.vehicle_id }">
+                <td>{{ s.plate }}</td>
+                <td>{{ s.type === 'welfare' ? '福祉' : '一般' }}</td>
+                <td class="fw-bold">{{ s.zone_count }}</td>
+                <td>{{ s.total_today }}</td>
+                <td>
+                  <span v-if="s.feasible" class="text-success">✓</span>
+                  <span v-else class="text-danger small">✗ {{ s.reason }}</span>
+                </td>
+                <td>
+                  <button class="btn btn-sm btn-primary" :disabled="!s.feasible"
+                          @click="adoptVehicle(zoneSuggest.order.id, s.vehicle_id)">採用</button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <small class="text-muted">採用＝手動指派此車(狀態轉已排班);時間窗精確可行性以實際排班為準。</small>
+        </template>
+      </div>
+    </div>
+  </div>
+
   <!-- 列表 -->
   <div class="table-responsive">
     <table class="table table-striped table-hover align-middle">
@@ -526,6 +588,12 @@ async function setStatus(o, value) {
           <td class="text-nowrap">
             <button class="btn btn-sm btn-outline-primary me-1" @click="openEdit(o)">編輯</button>
             <button
+              v-if="hasCoords(o) && !['canceled','done'].includes(o.status)"
+              class="btn btn-sm btn-outline-info me-1"
+              title="區域親和建議司機"
+              @click="suggestZone(o)"
+            >建議</button>
+            <button
               v-if="o.status === 'scheduled'"
               class="btn btn-sm btn-outline-success me-1"
               title="標記為進行中(重排時鎖定)"
@@ -551,3 +619,22 @@ async function setStatus(o, value) {
     </table>
   </div>
 </template>
+
+<style scoped>
+.zone-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1080;
+  padding: 1rem;
+}
+.zone-card {
+  width: 560px;
+  max-width: 95vw;
+  max-height: 85vh;
+  overflow: auto;
+}
+</style>
