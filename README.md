@@ -14,18 +14,21 @@
 
 | 功能 | 說明 |
 |------|------|
-| 登入認證 | JWT;資料 API 全程保護。預設帳號 `admin` / `admin123` |
+| 登入認證 | JWT + **多角色**(admin / dispatcher / driver);資料 API 全程保護。預設 `admin` / `admin123` |
 | 主資料管理 | 訂單 / 車輛 / 司機 CRUD,RWD 後台 |
-| 批次匯入 | 車行 `.xlsx` / `.csv` 匯入,中文表頭辨識,逐列驗證,**匯入後自動地理編碼** |
-| 地理編碼 | Map8 門牌級(可切 Nominatim);**地址簿快取**:先查 DB、未命中才打 Map8 |
+| 批次匯入 | 車行 `.xlsx` / `.csv` 匯入(SSE 進度),中文表頭辨識,逐列驗證,**匯入後自動地理編碼** |
+| 地理編碼 | Map8 門牌級(可切 Nominatim)+ **地址正規化**;**地址簿快取**:先查 DB、未命中才打 Map8 |
 | 地址簿 | 一個門牌(校正後地址+座標)對應多種原始描述;查無也快取 |
 | 自動排班 | VROOM:福祉車(skills)、共乘(capacity)、預約(time window)、班別 |
 | 行車時間矩陣 | 自架 OSRM `/table`(台灣 OSM 圖資,$0) |
 | 動態重排 | 取消 / 開始 / 完成;重排時鎖定進行中與已完成訂單 |
+| **區域親和建議** | 同區新單優先推薦今天已在該區的司機(達 N 觸發),護欄=車種/座位/上限;建議→採用(人在迴路) |
 | 路線地圖 | Map8 圖磚 + OSRM 實際道路路線,每車一色 + 上下車站點 |
-| 使用者管理 | 新增 / 刪除帳號、重設密碼(防刪最後一人) |
-| 報表 | 區間營運彙總:狀態/車種分佈、每日量、派遣率、各車派遣量 |
-| CI | GitHub Actions:後端匯入檢查、前端 build、Docker 映像建置 |
+| 司機 App | 司機登入看「我的路單」(綁定車輛,讀 route_stop) |
+| AI 派遣 | Claude 排班分析 / 插單建議(需 `ANTHROPIC_API_KEY`) |
+| 使用者管理 | 新增 / 刪除帳號、重設密碼、指定角色與綁車(防刪最後一人) |
+| 報表 | 區間營運彙總 + **CSV 匯出**:狀態/車種分佈、每日量、派遣率、各車派遣量 |
+| CI | GitHub Actions:後端 pytest(postgres)、前端 build、Docker 映像建置 |
 
 ---
 
@@ -178,13 +181,16 @@ SmartCar/
 | `GET /orders/import/template` · `POST /orders/import` | 範本 / 批次匯入(自動編碼) |
 | `POST /orders/{id}/geocode` · `POST /orders/geocode-pending` | 地理編碼 |
 | `POST /orders/{id}/cancel` · `POST /orders/{id}/status?value=` | 取消 / 改狀態 |
+| `POST /orders/{id}/assign?vehicle_id=` | 手動指派車輛(採用建議) |
 | `… /vehicles`、`… /drivers`(CRUD) | 車輛 / 司機 |
-| `POST /dispatch/run?service_date=` | 一鍵排班 |
+| `POST /dispatch/run?service_date=&ai=` | 一鍵排班(ai=true 附 Claude 摘要) |
+| `POST /dispatch/zone-suggest?order_id=&service_date=` | **區域親和建議**(dry-run) |
+| `POST /dispatch/ai-analyze` · `POST /dispatch/ai-insert` | AI 排班分析 / 插單建議 |
 | `GET /dispatch/routes-geojson?service_date=` | 路線 GeoJSON |
 | `GET /dispatch/matrix?service_date=` · `GET /dispatch/osrm-health` | 矩陣預覽 / OSRM 探活 |
 | `GET /addresses` | 地址簿 |
-| `… /users`(列表/新增/刪除)· `PUT /users/{id}/password` | 使用者管理 |
-| `GET /reports/overview?date_from=&date_to=` | 營運報表彙總 |
+| `… /users`(列表/新增/刪除)· `PUT /users/{id}/password` | 使用者管理(角色/綁車) |
+| `GET /reports/overview` · `GET /reports/export-csv` | 營運報表 / CSV 匯出 |
 
 ## 測試
 
@@ -268,4 +274,6 @@ git push                       # 需先完成 GitHub 認證
 獨立派遣試跑:[`demo/`](demo/)。
 
 ### Roadmap(未做)
-司機 App / 狀態回報、多角色權限、使用者管理 UI、報表統計、地址正規化(Map8 `/address/standardization`)。
+區域親和接進批次排班(VROOM 軟性偏好 + 人工vs自動對比)、文件智慧匯入(MarkItDown→Claude)、
+調度員 AI 助理(Claude tool-use)、司機狀態回報→重排、報表趨勢圖、多租戶與個資合規。
+完整規劃見 [`docs/self-build-roadmap.md`](docs/self-build-roadmap.md)。

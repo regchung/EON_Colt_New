@@ -40,12 +40,15 @@ Repo:https://github.com/regchung/SmartCar(remote `origin` 已設,乾淨 https UR
 `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`
 
 ## 目前狀態(已完成)
-登入(JWT)、訂單/車輛/司機 CRUD、Excel/CSV 批次匯入(自動地理編碼)、
-Map8 門牌級地理編碼 + 地址簿快取、VROOM 一鍵排班、自架 OSRM 矩陣、
-動態重排(取消/開始/完成,鎖定進行中)、路線地圖(Map8 圖磚 + OSRM 路線)、
-使用者管理、營運報表、GitHub Actions CI(後端 pytest + 前端 build + docker build,**綠燈**)。
+登入(JWT)+ **多角色**(admin/dispatcher/driver)、訂單/車輛/司機 CRUD、
+Excel/CSV/PDF 批次匯入(SSE 進度 + 自動地理編碼)、Map8 門牌級地理編碼 + **地址正規化** + 地址簿快取、
+VROOM 一鍵排班、自架 OSRM 矩陣、動態重排(取消/開始/完成,鎖定進行中)、
+路線地圖(Map8 圖磚 + OSRM 路線)、**司機 App(我的路單)**、使用者管理、
+營運報表 + **CSV 匯出**、**AI 派遣分析/插單(Claude,需金鑰)**、
+**區域親和建議(zone-suggest + 前端採用/手動指派)**、GitHub Actions CI(pytest + build + docker,**綠燈**)。
 
-migration 已到 `0006`;表:vehicles / drivers / orders / address_point / address_alias / route_stop / users。
+migration 已到 `0008`;表:vehicles / drivers / orders / address_point / address_alias / route_stop / users(含 role、vehicle_id)。
+規劃文件見 `docs/self-build-roadmap.md`。
 
 ---
 
@@ -55,18 +58,18 @@ migration 已到 `0006`;表:vehicles / drivers / orders / address_point / addres
 
 1. **🔴 安全(優先)**:撤銷曾在對話外露的 GitHub PAT,改用 `gh auth login`;
    視需要重新產生 Map8 金鑰並更新 `.env`。
-2. **司機 App / 狀態回報**(下一個主功能):司機登入看當日路單(讀 `route_stop`)→
-   回報到達/上車/完成 → 更新 `orders.status`(ongoing/done)→ 回饋動態重排。
-   可先做精簡版(司機選自己車輛看路單 + 狀態按鈕),認證沿用 JWT。
-3. **多角色權限**:目前單一管理員。加角色(admin / dispatcher / driver),
-   在 `users` 加 `role`,後端依角色限制端點(司機只見自己路單)。
-4. **地址正規化**:匯入流程串 Map8 `/address/standardization`(金鑰已含此 scope),
-   清洗車行地址後再 geocode,提升命中率與一致性。
-5. **報表強化**:加區間趨勢圖、匯出 CSV/Excel(下載走 axios blob)。
-6. **排班進階**:重排時對 `ongoing` 訂單用 VROOM `steps` 強制鎖定在原車序列
-   (目前是「排除不動」的簡化版)。
-7. **時區**:目前上車時間以牆鐘存(顯示一致)。若要嚴格台灣 +08/UTC,統一處理匯入與顯示。
-8. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`。
+2. **🟠 區域親和接進批次排班**:目前只有「動態插單建議」(`/dispatch/zone-suggest`)。
+   把區域親和當 **VROOM 軟性偏好**(同區同車折扣 / zone-first 兩階段)接進 `dispatcher.py`,
+   並做 **人工 vs 自動對比量測**(同批單:純 VROOM vs 帶親和,比里程/車數/準點)後再開大。
+   護欄不變:時間窗/車種/座位/每區上限為硬約束。
+3. **🟠 roadmap 其他自建項**(見 `docs/self-build-roadmap.md`):
+   - **文件智慧匯入**:`MarkItDown` 轉文字 → Claude 抽取結構化訂單 → 接現有匯入(PDF/Word/怪 Excel)。新增 `doc_ingest.py` + `POST /orders/import-doc`。
+   - **調度員 AI 助理**:擴充 `ai_dispatch.py` 為對話 + Claude tool-use(查單/試算/排班),建議→確認→寫入。
+4. **排班進階**:重排時對 `ongoing` 訂單用 VROOM `steps` 強制鎖定在原車序列(目前是「排除不動」簡化版)。
+5. **報表趨勢圖**:CSV 匯出已完成;再加區間趨勢圖。
+6. **測試**:補 `zone_affinity` 與 assign 的 pytest,讓 CI 守得更穩。
+7. **時區**:上車時間目前以牆鐘存(顯示一致)。若要嚴格台灣 +08/UTC,統一處理匯入與顯示。
+8. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規。
 
 > 接續方式:挑上方一項 → 用 TaskCreate 建子任務 → 後端先做並用 pytest/驗證 →
 > 前端做完 `--build frontend` 驗證 → commit + push(CI 需綠)。
