@@ -1,6 +1,20 @@
 <script setup>
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import client from '../api/client'
+
+// --- 常態共乘對(P3)---
+const recurring = ref([])
+const recurringLoading = ref(false)
+async function loadRecurring() {
+  recurringLoading.value = true
+  try {
+    const { data } = await client.get('/dispatch/pool-recurring', { params: { min_days: 3 } })
+    recurring.value = data.pairs
+  } finally {
+    recurringLoading.value = false
+  }
+}
+onMounted(loadRecurring)
 
 const fleet = ref('台北')
 const date = ref('')
@@ -50,6 +64,30 @@ async function consentGroup(group, idx) {
     雙跑排班(現況 vs 全允許共乘),找出<strong>值得徵詢同意</strong>的共乘組與可省車數。
     僅顯示繞路在容許範圍內的舒適組合;此頁唯讀,不影響派遣資料。
   </p>
+
+  <!-- 常態共乘對(P3):一次徵長期同意 -->
+  <div class="card shadow-sm mb-3 border-info">
+    <div class="card-header bg-info-subtle d-flex justify-content-between align-items-center py-2">
+      <span>🔁 常態共乘對(反覆同行 ≥ 3 日,適合一次徵長期同意)</span>
+      <span v-if="recurringLoading" class="spinner-border spinner-border-sm"></span>
+      <span v-else class="badge bg-info text-dark">{{ recurring.length }} 組</span>
+    </div>
+    <div class="table-responsive" style="max-height: 260px; overflow-y: auto">
+      <table class="table table-sm table-striped mb-0 align-middle">
+        <thead><tr><th>乘客 A</th><th>乘客 B</th><th>車行</th><th>同行天數</th><th>常見路線(例)</th></tr></thead>
+        <tbody>
+          <tr v-for="(p, i) in recurring" :key="i">
+            <td class="fw-semibold">{{ p.passengers[0] }}</td>
+            <td class="fw-semibold">{{ p.passengers[1] }}</td>
+            <td>{{ p.fleet }}</td>
+            <td><span class="badge bg-primary">{{ p.days }} 日</span></td>
+            <td class="small text-muted">{{ (p.sample_pickup || '').slice(0, 16) }} → {{ (p.sample_dropoff || '').slice(0, 16) }}</td>
+          </tr>
+          <tr v-if="!recurring.length && !recurringLoading"><td colspan="5" class="text-center text-muted py-3">無常態共乘對</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
   <div class="card shadow-sm mb-3"><div class="card-body">
     <div class="row g-2 align-items-end">

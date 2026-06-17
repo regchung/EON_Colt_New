@@ -13,7 +13,9 @@ from app.models.dispatch_comparison import DispatchComparison
 from app.models.order import Order
 from app.models.route import RouteStop
 from app.models.user import User
-from app.services import ai_dispatch, dispatcher, matrix, osrm, pool_suggest, zone_affinity
+from app.services import (
+    ai_dispatch, dispatcher, matrix, osrm, pool_suggest, recurring_pairs, zone_affinity,
+)
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
 
@@ -56,6 +58,13 @@ def pool_suggest_day(
     if r is None:
         raise HTTPException(status_code=404, detail="該日該車行無成行單或無可用車")
     return r
+
+
+@router.get("/pool-recurring")
+def pool_recurring(min_days: int = 3, time_tol_min: int = 30,
+                   near_m: float = 1500.0, db: Session = Depends(get_db)):
+    """常態共乘對:反覆同時間/同起訖點同行的乘客對,值得一次徵長期同意(dry-run)。"""
+    return recurring_pairs.find(db, min_days, time_tol_min, near_m)
 
 
 class PoolConsentIn(BaseModel):

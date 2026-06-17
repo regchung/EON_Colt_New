@@ -202,6 +202,7 @@ SmartCar/
 | `GET /dispatch/comparison/summary` · `GET /dispatch/comparison?fleet=` | 人工 vs 自動對比(總覽 / 逐日) |
 | `GET /dispatch/pool-suggest?service_date=&fleet=` | 共乘推薦:雙跑 VROOM 找值得徵詢同意的組 + 可省車數 |
 | `POST /dispatch/pool-consent` | 登錄共乘同意/撤回(留痕 by/at);同意後排班自動納入共乘 |
+| `GET /dispatch/pool-recurring?min_days=3` | 常態共乘對:反覆同時間/同起訖點同行的乘客對,適合徵長期同意 |
 
 > 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`。
 
