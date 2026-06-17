@@ -18,6 +18,17 @@ const exForm = ref({ vehicle_id: null, ex_date: '', available: false, reason: ''
 const checkDate = ref('')
 const availability = ref(null)
 
+// 需求預測(weekday 基線)→ 建議排車
+const fleets = ['台北', '新北', '神同行', '基隆', '樂格適', '發隆興']
+const demandFleet = ref('台北')
+const demand = ref(null)
+async function loadDemand() {
+  const { data } = await client.get('/dispatch/demand-forecast', {
+    params: { fleet: demandFleet.value, lookback_weeks: 12 },
+  })
+  demand.value = data
+}
+
 function flash(m) { toast.value = m; setTimeout(() => { toast.value = '' }, 3000) }
 
 async function loadPatterns() {
@@ -35,7 +46,7 @@ async function loadExceptions() {
   const { data } = await client.get('/roster/exceptions')
   exceptions.value = data
 }
-onMounted(async () => { await loadPatterns(); await loadExceptions() })
+onMounted(async () => { await loadPatterns(); await loadExceptions(); await loadDemand() })
 
 function toggle(p, wd) { p.set.has(wd) ? p.set.delete(wd) : p.set.add(wd) }
 
@@ -91,6 +102,31 @@ async function seedFromHistory() {
       從歷史回推週期班表
     </button>
   </div></div>
+
+  <!-- 需求預測(建議排車) -->
+  <div class="card shadow-sm mb-3 border-info">
+    <div class="card-header bg-info-subtle d-flex justify-content-between align-items-center py-2">
+      <span>📈 需求預測(weekday 基線 → 建議排車數)</span>
+      <select v-model="demandFleet" class="form-select form-select-sm" style="width:auto" @change="loadDemand">
+        <option v-for="f in fleets" :key="f" :value="f">{{ f }}</option>
+      </select>
+    </div>
+    <div class="table-responsive">
+      <table v-if="demand" class="table table-sm text-center align-middle mb-0">
+        <thead><tr><th></th><th v-for="r in demand.weekday_profile" :key="r.weekday">{{ r.name }}</th></tr></thead>
+        <tbody>
+          <tr><td class="text-start fw-semibold">平均趟次</td>
+            <td v-for="r in demand.weekday_profile" :key="r.weekday">{{ r.avg_trips }}</td></tr>
+          <tr><td class="text-start fw-semibold">建議排車</td>
+            <td v-for="r in demand.weekday_profile" :key="r.weekday">
+              <span class="badge" :class="r.suggest_vehicles ? 'bg-info text-dark' : 'bg-light text-muted'">{{ r.suggest_vehicles }}</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="card-footer small text-muted py-1">
+      依近 {{ demand?.lookback_weeks }} 週同星期平均;設定下方週期班表時可參考此建議數。
+    </div>
+  </div>
 
   <!-- 週期班表 -->
   <div class="card shadow-sm mb-3">

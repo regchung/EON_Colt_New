@@ -209,6 +209,7 @@ SmartCar/
 | `GET /dispatch/driver-suggest?passenger=` · `GET /dispatch/driver-loyalty` | 常客固定駕駛:乘客→慣用駕駛建議 / 高忠誠乘客清單(軟性偏好) |
 | `GET/POST /settings` · `PUT/DELETE /settings/{key}` | 系統參數設定 CRUD(**限系統管理者**);即時派遣讀取營運參數 |
 | `GET /roster/availability?service_date=` · `GET/PUT /roster/patterns` · `/roster/exceptions` · `POST /roster/seed-from-history` | 班表:當日出勤查詢 / 週期班表 / 例外 / 歷史回推 |
+| `GET /dispatch/demand-forecast?fleet=&horizon_days=&lookback_weeks=` | 輕量需求預測(weekday 基線):各日趟次 + 建議排車數 |
 
 > 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`pool_suggest.project_and_store()` 跑共乘增益投影(寫 `pool_projection`);`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`(含「共乘增益」一節)。
 

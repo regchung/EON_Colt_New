@@ -15,7 +15,7 @@ from app.models.pool_projection import PoolProjection
 from app.models.route import RouteStop
 from app.models.user import User
 from app.services import (
-    ai_dispatch, dispatcher, driver_affinity, matrix, osrm, pool_suggest,
+    ai_dispatch, dispatcher, driver_affinity, forecast, matrix, osrm, pool_suggest,
     recurring_pairs, zone_affinity,
 )
 
@@ -60,6 +60,13 @@ def pool_suggest_day(
     if r is None:
         raise HTTPException(status_code=404, detail="該日該車行無成行單或無可用車")
     return r
+
+
+@router.get("/demand-forecast")
+def demand_forecast(fleet: str | None = None, horizon_days: int = 14,
+                    lookback_weeks: int = 8, db: Session = Depends(get_db)):
+    """輕量需求預測(weekday 基線):未來各日趟次 + 建議排車數,供班表/人力規劃。"""
+    return forecast.forecast(db, fleet, horizon_days, lookback_weeks)
 
 
 @router.get("/driver-suggest")
