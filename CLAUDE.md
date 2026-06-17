@@ -88,30 +88,34 @@ orders 新增 `pool_consent_at`/`pool_consent_by`(共乘同意留痕)。
 
 ## TODO / 下次啟動執行(待辦)
 
-依優先序:
+### 🟢 進行中 / 待辦(依優先序)
 
 1. **🔴 安全(優先)**:撤銷曾在對話外露的 GitHub PAT,改用 `gh auth login`;
-   視需要重新產生 Map8 金鑰並更新 `.env`。
-2. **✅ 共乘增益接進報表/前端(已完成)**:`/dispatch/pool-gain` + `pool_projection` 表,
-   對比頁新增「共乘增益」卡、PDF 報告新增「六、共乘增益」一節(18.4%→26%、134 組/57 常態對)。
-3. **🔔 徵詢成功率學習(下次啟動主動告知)**:依路線/時段預測共乘徵詢成功率以排序撥打;
-   **需先累積真實徵詢結果**(`pool-consent` 已留痕同意/撤回),資料夠了再做。
-4. **✅ 常客固定駕駛規則(已完成,保守版)**:`driver_affinity.py` + `/dispatch/driver-suggest?passenger=`
-   + `/dispatch/driver-loyalty`。**實測全域訊號偏弱**(688 常客最常司機占比中位 ~27%,僅 7%/46 位 ≥50%),
-   故僅作高信心建議供人工指派參考,**未接進批次硬排**(同 zone-affinity 弱訊號處理)。
-5. **🟠 區域親和接進批次排班**:把區域親和當 **VROOM 軟性偏好**接進 `dispatcher.py`,搭對比量測再開大。
-   護欄不變:時間窗/車種/座位/每區上限為硬約束。(實測駕駛熟區訊號偏弱 11–21%,權重要保守)
-6. **🟠 對比進階**:時間窗敏感度分析、把省下車日換算成 NT$(對車隊報價用)。
-7. **🟠 roadmap 其他自建項**(見 `docs/self-build-roadmap.md`):
+   視需要重新產生 Map8 金鑰並更新 `.env`。(本機帳號操作,需使用者手動)
+2. **🟠 對比進階**:時間窗敏感度分析、把省下車日換算成 NT$(對車隊報價用)。
+3. **🟠 班別時段細緻化**:`shift_pattern`/`shift_exception` 已有 `shift_start/end` 欄位,
+   前端目前只勾上班日(時段預設用 06–18 服務窗);補「幾點到幾點」輸入即可細到時段。
+4. **🟠 區域親和接進批次排班**:把區域親和當 **VROOM 軟性偏好**接進 `dispatcher.py`,搭對比量測再開大。
+   護欄不變:時間窗/車種/座位/每區上限為硬約束。(實測駕駛熟區訊號偏弱 11–21%,權重要保守,建議緩)
+5. **🟠 roadmap 其他自建項**(見 `docs/self-build-roadmap.md`):
    - **文件智慧匯入**:`MarkItDown` 轉文字 → Claude 抽取結構化訂單 → 接現有匯入(PDF/Word/怪 Excel)。新增 `doc_ingest.py` + `POST /orders/import-doc`。
    - **調度員 AI 助理**:擴充 `ai_dispatch.py` 為對話 + Claude tool-use(查單/試算/排班),建議→確認→寫入。
-8. **排班進階**:重排時對 `ongoing` 訂單用 VROOM `steps` 強制鎖定在原車序列(目前是「排除不動」簡化版)。
-9. **報表趨勢圖**:CSV 匯出已完成;再加區間趨勢圖。
-10. **測試**:補 `zone_affinity` / `pool_suggest` / assign 的 pytest,讓 CI 守得更穩。
-11. **時區收尾**:派遣/對比已修(+08);尚待前端顯示與報表全鏈盤點(確保各處一致)。
-12. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規。
+6. **排班進階**:重排時對 `ongoing` 訂單用 VROOM `steps` 強制鎖定在原車序列(目前是「排除不動」簡化版)。
+7. **報表趨勢圖**:CSV 匯出已完成;再加區間趨勢圖。
+8. **測試**:補 `zone_affinity` / `pool_suggest` / `roster` / `settings` / assign 的 pytest,讓 CI 守得更穩。
+9. **時區收尾**:派遣/對比已修(+08);尚待前端顯示與報表全鏈盤點(確保各處一致)。
+10. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規。
 
-> 近期已完成:對比調參再跑(↓18.4% 實務值)、上車時間 +08 時區修正、共乘推薦 P1+P2+P3。
+> ⏸ **徵詢成功率學習**(見上方「🔔 啟動主動告知」):等 `pool-consent` 累積真實徵詢結果後再做。
+
+### ✅ 已完成里程碑(近→遠)
+- **班表(出勤)**:週期 `shift_pattern` + 單日 `shift_exception` + `roster.py` + `/roster/*` + 前端「班表」頁;即時派遣只用當日出勤車(無資料保守視為不出勤),可從歷史回推。
+- **系統參數設定**:`app_settings` + `settings.py` + `/settings` CRUD(限 admin)+ 前端「參數設定」頁;即時派遣讀營運參數,回測沿用固定方法學。
+- **常客固定駕駛建議**:`driver_affinity.py` + `/dispatch/driver-suggest`·`driver-loyalty`(弱訊號→僅高信心建議,不接硬排)。
+- **共乘推薦 P1+P2+P3 + 共乘增益**:`pool_suggest.py`/`recurring_pairs.py` + `/dispatch/pool-suggest`·`pool-consent`·`pool-recurring`·`pool-gain` + `pool_projection` 表 + 前端「共乘建議」頁 + 對比頁「共乘增益」卡 + PDF 一節(↓18.4%→↓26%)。
+- **司機營運規則 + 時區修正**:前後40分/趟、8h工時、06-18時段、共乘需同意 + 上車時間 +08;對比降至 **↓18.4%**(實務值)。
+- **車隊名冊匯入 + 出車起點/收車終點**:`fleet_import.py` + `/fleet/import` + VROOM 首末站錨定。
+- **人工 vs 自動對比引擎 + PDF 報告**:`comparison.py` + `/dispatch/comparison*` + 前端對比頁 + `scripts/make_report.py`。
 
 > 接續方式:挑上方一項 → 用 TaskCreate 建子任務 → 後端先做並用 pytest/驗證 →
 > 前端做完 `--build frontend` 驗證 → commit + push(CI 需綠)。
