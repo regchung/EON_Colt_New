@@ -10,7 +10,7 @@ from app.db.session import get_db
 from app.models.dispatch_comparison import DispatchComparison
 from app.models.order import Order
 from app.models.route import RouteStop
-from app.services import ai_dispatch, dispatcher, matrix, osrm, zone_affinity
+from app.services import ai_dispatch, dispatcher, matrix, osrm, pool_suggest, zone_affinity
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
 
@@ -41,6 +41,18 @@ def zone_suggest(order_id: int, service_date: date, db: Session = Depends(get_db
     if not order:
         raise HTTPException(status_code=404, detail="訂單不存在")
     return zone_affinity.suggest(db, order, service_date)
+
+
+@router.get("/pool-suggest")
+def pool_suggest_day(
+    service_date: date, fleet: str, window_min: int = 30,
+    max_detour_min: float = 15.0, db: Session = Depends(get_db),
+):
+    """共乘推薦(單日):雙跑 VROOM 找出值得徵詢同意的共乘組 + 可省車數(dry-run)。"""
+    r = pool_suggest.suggest_day(db, fleet, service_date, window_min, max_detour_min)
+    if r is None:
+        raise HTTPException(status_code=404, detail="該日該車行無成行單或無可用車")
+    return r
 
 
 @router.post("/ai-analyze")

@@ -200,6 +200,7 @@ SmartCar/
 | `POST /history/import` · `GET /history/stats` | 長照派遣歷史匯入 / 統計 |
 | `POST /fleet/import` | 車隊名冊匯入(回填座位/福祉/出車起點·收車終點) |
 | `GET /dispatch/comparison/summary` · `GET /dispatch/comparison?fleet=` | 人工 vs 自動對比(總覽 / 逐日) |
+| `GET /dispatch/pool-suggest?service_date=&fleet=` | 共乘推薦:雙跑 VROOM 找值得徵詢同意的組 + 可省車數 |
 
 > 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`。
 
