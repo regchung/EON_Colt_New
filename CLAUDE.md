@@ -94,27 +94,29 @@ orders 新增 `pool_consent_at`/`pool_consent_by`(共乘同意留痕)。
 
 1. **🔴 安全(優先)**:撤銷曾在對話外露的 GitHub PAT,改用 `gh auth login`;
    視需要重新產生 Map8 金鑰並更新 `.env`。(本機帳號操作,需使用者手動)
-2. **🟠 對比進階**:時間窗敏感度分析、把省下車日換算成 NT$(對車隊報價用)。
-3. **🟠 班別時段細緻化**:`shift_pattern`/`shift_exception` 已有 `shift_start/end` 欄位,
-   前端目前只勾上班日(時段預設用 06–18 服務窗);補「幾點到幾點」輸入即可細到時段。
-4. **🟠 區域親和接進批次排班**:把區域親和當 **VROOM 軟性偏好**接進 `dispatcher.py`,搭對比量測再開大。
+2. **🟠 區域親和接進批次排班**:把區域親和當 **VROOM 軟性偏好**接進 `dispatcher.py`,搭對比量測再開大。
    護欄不變:時間窗/車種/座位/每區上限為硬約束。(實測駕駛熟區訊號偏弱 11–21%,權重要保守,建議緩)
-5. **🟠 需求預測進階**:weekday 基線已上線(見已完成)。後續可:① 班表頁「一鍵套用建議排車數」;
+3. **🟠 需求預測進階**:weekday 基線 + ①一鍵套用建議排車數 已上線(見已完成)。後續可:
    ② 待累積 1–2 年、要做細粒度多序列(區×時段×車種)時再評估基礎模型。
    **TimesFM 等基礎模型暫不導入**:預約制需求已知、資料短小、主訊號為週循環,輕量基線即足;
    條件(長歷史 + 多序列 + 基線實測不足 + 願擔推論基建)達成再評估,避免違背「精簡」策略。
-6. **🟠 roadmap 其他自建項**(見 `docs/self-build-roadmap.md`):
+4. **🟠 roadmap 其他自建項**(見 `docs/self-build-roadmap.md`):
    - **文件智慧匯入**:`MarkItDown` 轉文字 → Claude 抽取結構化訂單 → 接現有匯入(PDF/Word/怪 Excel)。新增 `doc_ingest.py` + `POST /orders/import-doc`。
    - **調度員 AI 助理**:擴充 `ai_dispatch.py` 為對話 + Claude tool-use(查單/試算/排班),建議→確認→寫入。
-6. **排班進階**:重排時對 `ongoing` 訂單用 VROOM `steps` 強制鎖定在原車序列(目前是「排除不動」簡化版)。
-7. **報表趨勢圖**:CSV 匯出已完成;再加區間趨勢圖。
-8. **測試**:補 `zone_affinity` / `pool_suggest` / `roster` / `settings` / assign 的 pytest,讓 CI 守得更穩。
-9. **時區收尾**:派遣/對比已修(+08);尚待前端顯示與報表全鏈盤點(確保各處一致)。
-10. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規。
+5. **排班進階**:重排時對 `ongoing` 訂單用 VROOM `steps` 強制鎖定在原車序列(目前是「排除不動」簡化版)。
+6. **報表趨勢圖**:CSV 匯出已完成;再加區間趨勢圖。
+7. **測試**:已補 `settings`/`roster`/`zone_affinity`/`assign`/時區 的 pytest(見已完成,36 passed)。
+   `pool_suggest`/`comparison` 求解測試待補——需 CI 內備 OSRM 矩陣(目前 CI 無 OSRM,故僅測純函式)。
+8. **時區收尾**:派遣/對比已修(+08);尚待前端顯示與報表全鏈盤點(確保各處一致)。
+9. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規。
 
 > ⏸ **徵詢成功率學習**(見上方「🔔 啟動主動告知」):等 `pool-consent` 累積真實徵詢結果後再做。
 
 ### ✅ 已完成里程碑(近→遠)
+- **班別時段細緻化**:`/roster/patterns` 回傳每車班別 `shift_start/end`;班表頁週期班表每車加「起/迄」時間輸入(套用所有上班日,留空=06–18 預設)。即時派遣(`dispatcher`)已將班別時段作為車輛 `time_window`(`win=max(day_start,rs)…min(day_end,re)`),設定即生效。
+- **服務層測試擴充**:`tests/test_services.py`(純函式:`settings._coerce`/預設完整性、`roster._secs`、`comparison._secs_tw` 鎖定 +08 時區 bug、`zone_affinity._vehicle_feasible`、`forecast.WD_NAMES`)+ `tests/test_endpoints.py`(settings/roster 授權、`apply-forecast` dry-run、手動指派生命週期含清理)。共 **36 passed**。pytest 在 `requirements-dev.txt`(CI 已裝;本機執行容器需 `pip install -r requirements-dev.txt` 後再跑)。
+- **班表一鍵套用建議排車數**:`roster.apply_forecast()` + `/roster/apply-forecast`(dry_run 預覽/寫入);依需求預測各 weekday 建議數,挑該車行歷史最常出勤前 N 台覆寫週期班表,缺口顯示提示。班表頁「需求預測」卡加「套用建議到班表」鈕 + 實派列。(發現:新北建議 17/日但歷史僅湊 ~11-12 台,缺口可手動補。)
+- **對比進階(成本效益 + 時間窗敏感度)**:`comparison.sensitivity()` + `/dispatch/comparison/savings`·`/comparison/sensitivity` + 對比頁「💰 成本效益(省下車日→NT$)」「⏱️ 時間窗敏感度」卡;成本參數(`cost_per_vehicle_day`/`annual_service_days`)入參數設定「成本」群組。集團實測省 **536 車日 ≈ NT$134萬**(135 日)、**年化 ≈ NT$298萬**(@NT$2,500/車日);敏感度:上車窗 15→60 分,省車率 10%→27.5%,未派趟次不變(多為服務時段外)。
 - **輕量需求預測**:`forecast.py` + `/dispatch/demand-forecast`(weekday 季節基線:各日趟次/建議排車數)+ 班表頁「需求預測」卡。刻意不用 TimesFM(評估後:本專案效益低)。
 - **班表(出勤)**:週期 `shift_pattern` + 單日 `shift_exception` + `roster.py` + `/roster/*` + 前端「班表」頁;即時派遣只用當日出勤車(無資料保守視為不出勤),可從歷史回推。
 - **系統參數設定**:`app_settings` + `settings.py` + `/settings` CRUD(限 admin)+ 前端「參數設定」頁;即時派遣讀營運參數,回測沿用固定方法學。

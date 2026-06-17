@@ -7,11 +7,36 @@ const rows = ref([])
 const fleet = ref('')
 const loading = ref(false)
 const poolGain = ref(null)
+const savings = ref(null)
+
+// 時間窗敏感度(按需執行,VROOM 多跑需數十秒)
+const sens = ref(null)
+const sensLoading = ref(false)
+const sensSampleDays = ref(12)
 
 async function loadSummary() {
   const { data } = await client.get('/dispatch/comparison/summary')
   summary.value = data
 }
+async function loadSavings() {
+  try {
+    const { data } = await client.get('/dispatch/comparison/savings')
+    savings.value = data
+  } catch { /* 無對比資料時略過 */ }
+}
+async function runSensitivity() {
+  sensLoading.value = true
+  try {
+    const { data } = await client.get('/dispatch/comparison/sensitivity', {
+      params: { windows: '15,30,45,60', sample_days: sensSampleDays.value, ...(fleet.value ? { fleet: fleet.value } : {}) },
+      timeout: 300000,
+    })
+    sens.value = data
+  } finally {
+    sensLoading.value = false
+  }
+}
+function ntd(n) { return 'NT$ ' + (n || 0).toLocaleString('en-US') }
 async function loadPoolGain() {
   try {
     const { data } = await client.get('/dispatch/pool-gain')
@@ -29,7 +54,7 @@ async function loadRows() {
     loading.value = false
   }
 }
-onMounted(async () => { await loadSummary(); await loadPoolGain(); await loadRows() })
+onMounted(async () => { await loadSummary(); await loadSavings(); await loadPoolGain(); await loadRows() })
 
 function pct(n) { return (n || 0).toFixed(1) }
 // 共乘後相對人工的總節省率
@@ -63,6 +88,34 @@ function poolTotalPct() {
       已納入司機實務約束(前後40分/趟、8h工時、06-18時段、共乘需同意),為保守且貼近實務之估計。
     </p>
 
+    <!-- NT$ 換算(車隊報價/ROI) -->
+    <div v-if="savings" class="card shadow-sm mb-3 border-success">
+      <div class="card-header bg-success-subtle d-flex justify-content-between align-items-center py-2">
+        <span>💰 成本效益(省下車日 → NT$)</span>
+        <RouterLink to="/settings" class="btn btn-sm btn-outline-secondary">調整成本參數</RouterLink>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-6 col-md-3"><div class="text-center">
+            <div class="h4 fw-bold text-success mb-0">{{ ntd(savings.group.annual_saving_ntd) }}</div>
+            <small class="text-muted">年化省下成本</small></div></div>
+          <div class="col-6 col-md-3"><div class="text-center">
+            <div class="h4 fw-bold text-primary mb-0">{{ ntd(savings.group.observed_saving_ntd) }}</div>
+            <small class="text-muted">實測期間省下({{ savings.group.observed_days }} 日)</small></div></div>
+          <div class="col-6 col-md-3"><div class="text-center">
+            <div class="h4 fw-bold mb-0">{{ ntd(savings.group.per_day_saving_ntd) }}</div>
+            <small class="text-muted">平均每營運日省下</small></div></div>
+          <div class="col-6 col-md-3"><div class="text-center">
+            <div class="h4 fw-bold mb-0">{{ savings.group.saved_vehicle_days }} 車日</div>
+            <small class="text-muted">@ {{ ntd(savings.cost_per_vehicle_day) }}/車日</small></div></div>
+        </div>
+        <p class="small text-muted mb-0 mt-2">
+          年化 = 平均每營運日省下 × 年營運天數({{ savings.annual_service_days }} 日);
+          每車日成本與年營運天數可於「參數設定」調整,以貼近實際報價。
+        </p>
+      </div>
+    </div>
+
     <!-- 共乘增益 -->
     <div v-if="poolGain" class="card shadow-sm mb-3 border-info">
       <div class="card-header bg-info-subtle d-flex justify-content-between align-items-center py-2">
@@ -91,6 +144,47 @@ function poolTotalPct() {
           ↓{{ pct(summary.group.saved_pct) }}% 推進到 ↓{{ poolTotalPct() }}%;其中 {{ poolGain.group.recurring_pairs }}
           對為反覆同行,適合一次徵長期同意。
         </p>
+      </div>
+    </div>
+
+    <!-- 時間窗敏感度 -->
+    <div class="card shadow-sm mb-3 border-primary">
+      <div class="card-header bg-primary-subtle d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
+        <span>⏱️ 時間窗敏感度(放寬上車彈性 → 省更多車 vs 未派)</span>
+        <div class="d-flex align-items-center gap-2">
+          <label class="small mb-0">取樣天數</label>
+          <input v-model.number="sensSampleDays" type="number" min="3" max="40" class="form-control form-control-sm" style="width:5rem" />
+          <button class="btn btn-sm btn-primary" :disabled="sensLoading" @click="runSensitivity">
+            <span v-if="sensLoading" class="spinner-border spinner-border-sm me-1"></span>{{ sensLoading ? '計算中…' : '執行分析' }}
+          </button>
+        </div>
+      </div>
+      <div class="card-body">
+        <p v-if="!sens && !sensLoading" class="text-muted small mb-0">
+          取最忙的 N 天{{ fleet ? `(${fleet})` : '(全車行)' }},在 15/30/45/60 分時間窗下各重跑一次自動派遣,
+          觀察「放寬上車彈性對省車數與未派趟次的影響」。每窗一輪,約需數十秒。
+        </p>
+        <div v-if="sens" class="table-responsive">
+          <table class="table table-sm text-center align-middle mb-2">
+            <thead class="table-light"><tr>
+              <th>上車時間窗</th><th>省車率</th><th>人工→自動車日</th><th>省下車日</th><th>未派趟次</th><th>未派率</th>
+            </tr></thead>
+            <tbody>
+              <tr v-for="w in sens.windows" :key="w.window_min">
+                <td class="fw-semibold">±{{ w.window_min }} 分</td>
+                <td><span class="badge bg-success">↓{{ pct(w.saved_pct) }}%</span></td>
+                <td>{{ w.human_vehicle_days }} → <span class="text-success fw-bold">{{ w.vroom_vehicle_days }}</span></td>
+                <td>{{ w.saved_vehicle_days }}</td>
+                <td :class="{ 'text-danger': w.vroom_unassigned }">{{ w.vroom_unassigned }}</td>
+                <td>{{ pct(w.unassigned_pct) }}%</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="small text-muted mb-0">
+            取樣 {{ sens.sample_days }} 天、共 {{ sens.windows[0]?.orders }} 趟。時間窗越寬、彈性越大 → 通常用車越省;
+            未派趟次多為 06–18 服務時段外者(放寬上車窗救不回)。供報價與 SLA(承諾準時彈性)權衡參考。
+          </p>
+        </div>
       </div>
     </div>
 

@@ -32,6 +32,10 @@ DEFAULTS: list[dict] = [
      "label": "常態共乘對最少同行天數", "description": "達此天數才列為常態共乘對"},
     {"key": "order_cutoff", "value": "17:30", "value_type": "str", "group": "營運",
      "label": "當日截單時間", "description": "之後不再接當日新單(行控流程參考)"},
+    {"key": "cost_per_vehicle_day", "value": "2500", "value_type": "float", "group": "成本",
+     "label": "每車日成本(NT$)", "description": "單車單日總成本(司機薪資+車輛攤提+油料保險),用於把省下車日換算成金額"},
+    {"key": "annual_service_days", "value": "300", "value_type": "int", "group": "成本",
+     "label": "年營運天數", "description": "每年實際出車天數,用於年化省下成本"},
 ]
 _DEFAULT_MAP = {d["key"]: d for d in DEFAULTS}
 

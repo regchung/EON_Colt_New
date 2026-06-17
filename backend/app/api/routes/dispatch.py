@@ -15,9 +15,10 @@ from app.models.pool_projection import PoolProjection
 from app.models.route import RouteStop
 from app.models.user import User
 from app.services import (
-    ai_dispatch, dispatcher, driver_affinity, forecast, matrix, osrm, pool_suggest,
-    recurring_pairs, zone_affinity,
+    ai_dispatch, comparison, dispatcher, driver_affinity, forecast, matrix, osrm,
+    pool_suggest, recurring_pairs, zone_affinity,
 )
+from app.services import settings as app_settings
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
 
@@ -250,6 +251,69 @@ def comparison_summary(db: Session = Depends(get_db)):
     for (f,) in db.execute(select(DispatchComparison.fleet.distinct())).all():
         by_fleet[f] = agg(DispatchComparison.fleet == f)
     return {"group": agg(), "by_fleet": by_fleet}
+
+
+@router.get("/comparison/savings")
+def comparison_savings(db: Session = Depends(get_db)):
+    """把省下的車日換算成 NT$(實測期間 + 年化),供車隊報價/ROI 試算。
+
+    成本參數讀自「參數設定」:cost_per_vehicle_day(每車日成本)、annual_service_days(年營運天數)。
+    """
+    cost = float(app_settings.get(db, "cost_per_vehicle_day", 2500) or 0)
+    annual_days = int(app_settings.get(db, "annual_service_days", 300) or 0)
+
+    def agg(where=None):
+        q = select(
+            func.count(func.distinct(DispatchComparison.service_date)),
+            func.coalesce(func.sum(DispatchComparison.human_vehicles), 0),
+            func.coalesce(func.sum(DispatchComparison.saved_vehicles), 0),
+        )
+        if where is not None:
+            q = q.where(where)
+        obs_days, human_vd, saved_vd = db.execute(q).one()
+        obs_days = obs_days or 0
+        human_vd = int(human_vd or 0)
+        saved_vd = int(saved_vd or 0)
+        observed_saving = saved_vd * cost
+        # 年化:以實測期間的「每營運日平均省車日」外推到全年營運天數
+        per_day_saving = (observed_saving / obs_days) if obs_days else 0.0
+        annual_saving = per_day_saving * annual_days
+        return {
+            "observed_days": obs_days,
+            "saved_vehicle_days": saved_vd,
+            "human_vehicle_days": human_vd,
+            "observed_saving_ntd": round(observed_saving),
+            "per_day_saving_ntd": round(per_day_saving),
+            "annual_saving_ntd": round(annual_saving),
+        }
+
+    by_fleet = {}
+    for (f,) in db.execute(select(DispatchComparison.fleet.distinct())).all():
+        by_fleet[f] = agg(DispatchComparison.fleet == f)
+    return {
+        "cost_per_vehicle_day": cost,
+        "annual_service_days": annual_days,
+        "group": agg(),
+        "by_fleet": by_fleet,
+    }
+
+
+@router.get("/comparison/sensitivity")
+def comparison_sensitivity(
+    windows: str = "15,30,45,60", fleet: str | None = None,
+    sample_days: int = 20, db: Session = Depends(get_db),
+):
+    """時間窗敏感度:多個上車時間窗下重跑取樣日,看「放寬時間窗 → 省更多車 vs 未派」權衡。
+
+    windows 為逗號分隔分鐘數;取樣自最忙的 sample_days 天(各 window 同基準)。
+    """
+    try:
+        wins = [int(w) for w in windows.split(",") if w.strip()]
+    except ValueError:
+        raise HTTPException(status_code=400, detail="windows 需為逗號分隔的整數分鐘")
+    if not wins:
+        raise HTTPException(status_code=400, detail="請至少提供一個時間窗")
+    return comparison.sensitivity(db, wins, fleet, sample_days)
 
 
 @router.get("/comparison")

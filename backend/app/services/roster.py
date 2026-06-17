@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, time
+from datetime import date, time, timedelta
 
 from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session
@@ -14,6 +14,9 @@ from sqlalchemy.orm import Session
 from app.models.dispatch_history import DispatchHistory
 from app.models.shift import ShiftException, ShiftPattern
 from app.models.vehicle import Vehicle
+from app.services import forecast as forecast_svc
+
+SERVED = "已轉至正式單"
 
 
 def _secs(t: time | None):
@@ -84,3 +87,67 @@ def seed_from_history(db: Session, min_times: int = 3) -> dict:
     db.commit()
     return {"patterns_created": created, "vehicles_covered": len(vehicles_covered),
             "min_times": min_times}
+
+
+def apply_forecast(db: Session, fleet: str, lookback_weeks: int = 12,
+                   dry_run: bool = False) -> dict:
+    """依需求預測(weekday 基線)的建議排車數,覆寫『該車行』的週期班表。
+
+    各 weekday:取建議排車數 N,從歷史挑該日最常出勤的前 N 台(限該車行)排為常態上班。
+    僅異動該車行車輛的週期班表(不影響其他車行、不動單日例外)。
+    dry_run=True 只回傳計畫不寫入。
+    """
+    prof = forecast_svc.weekday_profile(db, fleet, lookback_weeks)
+    if not prof.get("last_date"):
+        return {"fleet": fleet, "applied": False, "reason": "該車行無歷史資料,無法套用"}
+    suggest = {r["weekday"]: r["suggest_vehicles"] for r in prof["weekdays"]}
+    last_d = date.fromisoformat(prof["last_date"])
+    cutoff = last_d - timedelta(weeks=lookback_weeks)
+
+    vehs = list(db.scalars(
+        select(Vehicle).where(Vehicle.active.is_(True), Vehicle.home_fleet == fleet)
+    ).all())
+    if not vehs:
+        return {"fleet": fleet, "applied": False, "reason": "該車行無在籍車輛(home_fleet)"}
+    plate_to_id = {v.plate: v.id for v in vehs}
+    fleet_vids = {v.id for v in vehs}
+
+    # 近 lookback 期間內,各 (weekday, plate) 出勤的不同日期數 → 用於排序挑車
+    rows = db.execute(
+        select(distinct(DispatchHistory.plate), DispatchHistory.service_date)
+        .where(DispatchHistory.fleet == fleet, DispatchHistory.status == SERVED,
+               DispatchHistory.plate.like("R%"), DispatchHistory.service_date > cutoff)
+    ).all()
+    wd_plate: dict[int, dict[str, set]] = defaultdict(lambda: defaultdict(set))
+    for plate, sd in rows:
+        if sd and plate in plate_to_id:
+            wd_plate[sd.weekday()][plate].add(sd)
+
+    plan = []
+    selected: dict[int, set[int]] = {}
+    for wd in range(7):
+        n = int(suggest.get(wd, 0) or 0)
+        ranked = sorted(wd_plate.get(wd, {}).items(), key=lambda kv: len(kv[1]), reverse=True)
+        chosen = ranked[:n] if n else []
+        selected[wd] = {plate_to_id[p] for p, _ in chosen}
+        plan.append({
+            "weekday": wd, "name": forecast_svc.WD_NAMES[wd],
+            "suggest": n, "assigned": len(chosen),
+            "plates": [p for p, _ in chosen],
+            "short": max(0, n - len(chosen)),  # 建議數 > 歷史可用車數時的缺口
+        })
+
+    if not dry_run:
+        db.query(ShiftPattern).filter(
+            ShiftPattern.vehicle_id.in_(fleet_vids)).delete(synchronize_session=False)
+        for wd, vids in selected.items():
+            for vid in vids:
+                db.add(ShiftPattern(vehicle_id=vid, weekday=wd))
+        db.commit()
+
+    return {
+        "fleet": fleet, "applied": not dry_run, "lookback_weeks": lookback_weeks,
+        "last_date": prof["last_date"], "fleet_vehicles": len(vehs),
+        "patterns_set": sum(len(s) for s in selected.values()),
+        "plan": plan,
+    }

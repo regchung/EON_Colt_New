@@ -182,3 +182,45 @@ def run_batch(db: Session, window_min: int = 30, progress=None) -> dict:
                 progress(done, len(combos))
     db.commit()
     return {"combos": len(combos), "compared": done, "skipped": skipped}
+
+
+def sensitivity(db: Session, windows: list[int], fleet: str | None = None,
+                sample_days: int = 20, progress=None) -> dict:
+    """時間窗敏感度:在多個上車時間窗下,對同一組取樣日重跑 VROOM,
+    呈現「放寬時間窗 → 省更多車 vs 未派趟次」的權衡(供報價/SLA 決策)。
+
+    取樣自已有對比結果中最忙的 sample_days 天,確保各 window 比較基準一致。
+    """
+    q = select(DispatchComparison.fleet, DispatchComparison.service_date, DispatchComparison.n_orders)
+    if fleet:
+        q = q.where(DispatchComparison.fleet == fleet)
+    combos = db.execute(q.order_by(DispatchComparison.n_orders.desc()).limit(sample_days)).all()
+    if not combos:
+        return {"fleet": fleet, "sample_days": 0, "windows": []}
+
+    rows = []
+    for i, w in enumerate(sorted(set(windows))):
+        hv = vv = saved = unassigned = days = orders = 0
+        for f, sd, _ in combos:
+            try:
+                r = compare_day(db, f, sd, w)
+            except Exception:  # noqa: BLE001
+                r = None
+            if r is None:
+                continue
+            days += 1
+            orders += r["n_orders"]
+            hv += r["human_vehicles"]
+            vv += r["vroom_vehicles"]
+            saved += r["saved_vehicles"]
+            unassigned += r["vroom_unassigned"]
+        rows.append({
+            "window_min": w, "days": days, "orders": orders,
+            "human_vehicle_days": hv, "vroom_vehicle_days": vv,
+            "saved_vehicle_days": saved, "vroom_unassigned": unassigned,
+            "saved_pct": round(100.0 * saved / hv, 1) if hv else 0,
+            "unassigned_pct": round(100.0 * unassigned / orders, 1) if orders else 0,
+        })
+        if progress:
+            progress(i + 1, len(set(windows)))
+    return {"fleet": fleet, "sample_days": len(combos), "windows": rows}

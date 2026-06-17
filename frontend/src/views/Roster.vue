@@ -22,11 +22,33 @@ const availability = ref(null)
 const fleets = ['台北', '新北', '神同行', '基隆', '樂格適', '發隆興']
 const demandFleet = ref('台北')
 const demand = ref(null)
+const applying = ref(false)
+const applyResult = ref(null)
 async function loadDemand() {
+  applyResult.value = null
   const { data } = await client.get('/dispatch/demand-forecast', {
     params: { fleet: demandFleet.value, lookback_weeks: 12 },
   })
   demand.value = data
+}
+async function applyForecast() {
+  if (!confirm(`將以建議排車數覆寫「${demandFleet.value}」車行的週期班表,各日挑歷史最常出勤的前 N 台。確定套用?`)) return
+  applying.value = true
+  try {
+    const { data } = await client.post('/roster/apply-forecast', null, {
+      params: { fleet: demandFleet.value, lookback_weeks: 12, dry_run: false },
+    })
+    if (!data.applied) { error.value = data.reason || '無法套用'; return }
+    applyResult.value = data
+    await loadPatterns()
+    const short = data.plan.filter((p) => p.short > 0)
+    flash(`已套用 ${demandFleet.value}:設定 ${data.patterns_set} 筆班表` +
+      (short.length ? `;${short.length} 個工作日歷史車數不足建議` : ''))
+  } catch (e) {
+    error.value = e.response?.data?.detail || '套用失敗'
+  } finally {
+    applying.value = false
+  }
 }
 
 function flash(m) { toast.value = m; setTimeout(() => { toast.value = '' }, 3000) }
@@ -53,7 +75,11 @@ function toggle(p, wd) { p.set.has(wd) ? p.set.delete(wd) : p.set.add(wd) }
 async function savePattern(p) {
   savingId.value = p.vehicle_id
   try {
-    await client.put(`/roster/patterns/${p.vehicle_id}`, { weekdays: [...p.set] })
+    await client.put(`/roster/patterns/${p.vehicle_id}`, {
+      weekdays: [...p.set],
+      shift_start: p.shift_start || null,
+      shift_end: p.shift_end || null,
+    })
     flash(`已儲存 ${p.plate} 班表`)
   } catch (e) { error.value = e.response?.data?.detail || '儲存失敗' } finally { savingId.value = null }
 }
@@ -105,11 +131,16 @@ async function seedFromHistory() {
 
   <!-- 需求預測(建議排車) -->
   <div class="card shadow-sm mb-3 border-info">
-    <div class="card-header bg-info-subtle d-flex justify-content-between align-items-center py-2">
+    <div class="card-header bg-info-subtle d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
       <span>📈 需求預測(weekday 基線 → 建議排車數)</span>
-      <select v-model="demandFleet" class="form-select form-select-sm" style="width:auto" @change="loadDemand">
-        <option v-for="f in fleets" :key="f" :value="f">{{ f }}</option>
-      </select>
+      <div class="d-flex align-items-center gap-2">
+        <select v-model="demandFleet" class="form-select form-select-sm" style="width:auto" @change="loadDemand">
+          <option v-for="f in fleets" :key="f" :value="f">{{ f }}</option>
+        </select>
+        <button class="btn btn-sm btn-info text-dark" :disabled="applying" @click="applyForecast">
+          <span v-if="applying" class="spinner-border spinner-border-sm me-1"></span>套用建議到班表
+        </button>
+      </div>
     </div>
     <div class="table-responsive">
       <table v-if="demand" class="table table-sm text-center align-middle mb-0">
@@ -120,21 +151,29 @@ async function seedFromHistory() {
           <tr><td class="text-start fw-semibold">建議排車</td>
             <td v-for="r in demand.weekday_profile" :key="r.weekday">
               <span class="badge" :class="r.suggest_vehicles ? 'bg-info text-dark' : 'bg-light text-muted'">{{ r.suggest_vehicles }}</span></td></tr>
+          <tr v-if="applyResult"><td class="text-start fw-semibold">實派(已套用)</td>
+            <td v-for="p in applyResult.plan" :key="p.weekday">
+              <span :class="p.short ? 'text-danger fw-bold' : ''">{{ p.assigned }}</span>
+              <small v-if="p.short" class="text-danger">(缺{{ p.short }})</small></td></tr>
         </tbody>
       </table>
     </div>
     <div class="card-footer small text-muted py-1">
-      依近 {{ demand?.lookback_weeks }} 週同星期平均;設定下方週期班表時可參考此建議數。
+      依近 {{ demand?.lookback_weeks }} 週同星期平均。「套用建議到班表」會以各日建議數,挑該車行歷史最常出勤的前 N 台覆寫此車行週期班表;
+      若歷史可用車數不足建議,顯示缺口(可手動於下方補上班日)。
     </div>
   </div>
 
   <!-- 週期班表 -->
   <div class="card shadow-sm mb-3">
-    <div class="card-header py-2 fw-semibold">週期班表(勾選常態上班日)</div>
+    <div class="card-header py-2">
+      <span class="fw-semibold">週期班表(勾選常態上班日)</span>
+      <small class="text-muted ms-2">起/迄為該車班別時段(套用所有上班日);留空則用服務時段預設(06–18)。即時派遣會以此限制出車時間窗。</small>
+    </div>
     <div class="table-responsive" style="max-height: 460px; overflow-y: auto">
       <table class="table table-sm align-middle mb-0">
         <thead class="table-light" style="position: sticky; top: 0">
-          <tr><th>車牌</th><th>車行</th><th v-for="(d, i) in WD" :key="i" class="text-center">{{ d }}</th><th></th></tr>
+          <tr><th>車牌</th><th>車行</th><th v-for="(d, i) in WD" :key="i" class="text-center">{{ d }}</th><th class="text-center">起</th><th class="text-center">迄</th><th></th></tr>
         </thead>
         <tbody>
           <tr v-for="p in patterns" :key="p.vehicle_id">
@@ -143,11 +182,13 @@ async function seedFromHistory() {
             <td v-for="(d, i) in WD" :key="i" class="text-center">
               <input type="checkbox" :checked="p.set.has(i)" @change="toggle(p, i)" />
             </td>
+            <td><input v-model="p.shift_start" type="time" class="form-control form-control-sm" style="width:7.5rem" /></td>
+            <td><input v-model="p.shift_end" type="time" class="form-control form-control-sm" style="width:7.5rem" /></td>
             <td><button class="btn btn-sm btn-outline-primary" :disabled="savingId === p.vehicle_id" @click="savePattern(p)">
               <span v-if="savingId === p.vehicle_id" class="spinner-border spinner-border-sm"></span><span v-else>存</span>
             </button></td>
           </tr>
-          <tr v-if="!patterns.length && !loading"><td colspan="10" class="text-center text-muted py-3">尚無車輛</td></tr>
+          <tr v-if="!patterns.length && !loading"><td colspan="12" class="text-center text-muted py-3">尚無車輛</td></tr>
         </tbody>
       </table>
     </div>
