@@ -28,6 +28,9 @@
 | AI 派遣 | Claude 排班分析 / 插單建議(需 `ANTHROPIC_API_KEY`) |
 | 使用者管理 | 新增 / 刪除帳號、重設密碼、指定角色與綁車(防刪最後一人) |
 | 報表 | 區間營運彙總 + **CSV 匯出**:狀態/車種分佈、每日量、派遣率、各車派遣量 |
+| 歷史匯入 | 長照平台匯出檔 → 訂單 + **人工派遣結果**(`dispatch_history`)+ 自建車/司機 + 灌地址簿(去識別化) |
+| 車行標記 | 集團統一派遣:`fleet` 標記每筆訂單;車輛共用車池 + `home_fleet` |
+| 人工 vs 自動對比 | 逐(車行×日)以 OSRM+VROOM 重排,比人工用車/里程/可行性;前端對比頁 + PDF 報告 |
 | CI | GitHub Actions:後端 pytest(postgres)、前端 build、Docker 映像建置 |
 
 ---
@@ -191,6 +194,10 @@ SmartCar/
 | `GET /addresses` | 地址簿 |
 | `… /users`(列表/新增/刪除)· `PUT /users/{id}/password` | 使用者管理(角色/綁車) |
 | `GET /reports/overview` · `GET /reports/export-csv` | 營運報表 / CSV 匯出 |
+| `POST /history/import` · `GET /history/stats` | 長照派遣歷史匯入 / 統計 |
+| `GET /dispatch/comparison/summary` · `GET /dispatch/comparison?fleet=` | 人工 vs 自動對比(總覽 / 逐日) |
+
+> 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`。
 
 ## 測試
 
