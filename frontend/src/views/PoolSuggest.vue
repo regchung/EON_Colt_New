@@ -11,6 +11,9 @@ const result = ref(null)
 
 const fleets = ['台北', '新北', '神同行', '基隆', '樂格適', '發隆興']
 
+const consenting = ref(null)
+const toast = ref('')
+
 async function run() {
   if (!date.value) { error.value = '請選擇日期'; return }
   loading.value = true; error.value = ''; result.value = null
@@ -23,6 +26,21 @@ async function run() {
     error.value = e.response?.data?.detail || '查詢失敗'
   } finally {
     loading.value = false
+  }
+}
+
+async function consentGroup(group, idx) {
+  const ids = group.members.map((m) => m.order_id)
+  consenting.value = idx
+  try {
+    const { data } = await client.post('/dispatch/pool-consent', { order_ids: ids, consent: true })
+    toast.value = `已登錄 ${data.updated} 筆同意(${data.by});重算中…`
+    await run()  // 重新試算,已同意組會反映進現況
+  } catch (e) {
+    error.value = e.response?.data?.detail || '登錄同意失敗'
+  } finally {
+    consenting.value = null
+    setTimeout(() => { toast.value = '' }, 4000)
   }
 }
 </script>
@@ -58,6 +76,7 @@ async function run() {
   </div></div>
 
   <div v-if="error" class="alert alert-danger">{{ error }}</div>
+  <div v-if="toast" class="alert alert-success py-2">{{ toast }}</div>
 
   <template v-if="result">
     <div class="row g-3 mb-3">
@@ -82,9 +101,14 @@ async function run() {
     <div v-if="!result.suggestions.length" class="alert alert-secondary">當日無建議徵詢的共乘組。</div>
 
     <div v-for="(g, i) in result.suggestions" :key="i" class="card mb-2 shadow-sm">
-      <div class="card-header d-flex justify-content-between py-2">
+      <div class="card-header d-flex justify-content-between align-items-center py-2">
         <span>共乘組 #{{ i + 1 }}（{{ g.size }} 趟）</span>
-        <span class="badge" :class="g.max_detour_min <= 10 ? 'bg-success' : 'bg-warning text-dark'">最大繞路 {{ g.max_detour_min }} 分</span>
+        <div class="d-flex align-items-center gap-2">
+          <span class="badge" :class="g.max_detour_min <= 10 ? 'bg-success' : 'bg-warning text-dark'">最大繞路 {{ g.max_detour_min }} 分</span>
+          <button class="btn btn-sm btn-success" :disabled="consenting === i" @click="consentGroup(g, i)">
+            <span v-if="consenting === i" class="spinner-border spinner-border-sm me-1"></span>標記同意並重算
+          </button>
+        </div>
       </div>
       <ul class="list-group list-group-flush">
         <li v-for="m in g.members" :key="m.order_id" class="list-group-item d-flex justify-content-between align-items-center">

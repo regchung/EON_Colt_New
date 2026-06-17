@@ -1,15 +1,18 @@
 """派遣相關端點(本階段:距離矩陣引擎驗證;下一步:VROOM 排班)。"""
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.dispatch_comparison import DispatchComparison
 from app.models.order import Order
 from app.models.route import RouteStop
+from app.models.user import User
 from app.services import ai_dispatch, dispatcher, matrix, osrm, pool_suggest, zone_affinity
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
@@ -53,6 +56,30 @@ def pool_suggest_day(
     if r is None:
         raise HTTPException(status_code=404, detail="該日該車行無成行單或無可用車")
     return r
+
+
+class PoolConsentIn(BaseModel):
+    order_ids: list[int]
+    consent: bool = True
+
+
+@router.post("/pool-consent")
+def pool_consent(
+    body: PoolConsentIn,
+    db: Session = Depends(get_db),
+    current: User = Depends(get_current_user),
+):
+    """登錄共乘同意/撤回(留痕:誰、何時)。同意後排班/對比/推薦會自動納入共乘。"""
+    orders = list(db.scalars(select(Order).where(Order.id.in_(body.order_ids))).all())
+    if not orders:
+        raise HTTPException(status_code=404, detail="找不到指定訂單")
+    now = datetime.now(timezone.utc)
+    for o in orders:
+        o.allow_pool = body.consent
+        o.pool_consent_at = now if body.consent else None
+        o.pool_consent_by = current.username if body.consent else None
+    db.commit()
+    return {"updated": len(orders), "consent": body.consent, "by": current.username}
 
 
 @router.post("/ai-analyze")

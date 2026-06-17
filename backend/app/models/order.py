@@ -40,6 +40,8 @@ class Order(Base):
     vehicle_type: Mapped[str] = mapped_column(String(10), default="normal")  # welfare|normal
     need_wheelchair: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_pool: Mapped[bool] = mapped_column(Boolean, default=True)
+    pool_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 共乘同意時間(留痕)
+    pool_consent_by: Mapped[str | None] = mapped_column(String(50))  # 徵詢/登錄者(行控)
     note: Mapped[str | None] = mapped_column(Text)
 
     status: Mapped[str] = mapped_column(String(20), default="imported", index=True)
