@@ -241,3 +241,19 @@ def project_batch(db: Session, window_min: int = 30, progress=None) -> dict:
     for f in by_fleet.values():
         f["extra_saved_pct_vs_now"] = pct(f["v_now"], f["v_pool"])
     return {"group": agg, "by_fleet": by_fleet}
+
+
+def project_and_store(db: Session, window_min: int = 30, progress=None) -> dict:
+    """跑投影並寫入 pool_projection(每車行一列),供報表/前端快速讀取。"""
+    from app.models.pool_projection import PoolProjection
+
+    res = project_batch(db, window_min, progress)
+    db.query(PoolProjection).delete()
+    for fleet, s in res["by_fleet"].items():
+        db.add(PoolProjection(
+            fleet=fleet, window_min=window_min, days=s["days"],
+            v_now=s["v_now"], v_pool=s["v_pool"],
+            saved_vehicles=s["v_now"] - s["v_pool"], ask_groups=s["ask_groups"],
+        ))
+    db.commit()
+    return res

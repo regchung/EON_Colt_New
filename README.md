@@ -203,8 +203,9 @@ SmartCar/
 | `GET /dispatch/pool-suggest?service_date=&fleet=` | 共乘推薦:雙跑 VROOM 找值得徵詢同意的組 + 可省車數 |
 | `POST /dispatch/pool-consent` | 登錄共乘同意/撤回(留痕 by/at);同意後排班自動納入共乘 |
 | `GET /dispatch/pool-recurring?min_days=3` | 常態共乘對:反覆同時間/同起訖點同行的乘客對,適合徵長期同意 |
+| `GET /dispatch/pool-gain` | 共乘增益總覽(讀 `pool_projection`):現況→共乘後車日 + 額外省幅,供對比頁/報表 |
 
-> 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`。
+> 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`pool_suggest.project_and_store()` 跑共乘增益投影(寫 `pool_projection`);`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`(含「共乘增益」一節)。
 
 ## 測試
 

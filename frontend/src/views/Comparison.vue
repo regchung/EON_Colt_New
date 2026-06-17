@@ -6,10 +6,17 @@ const summary = ref(null)
 const rows = ref([])
 const fleet = ref('')
 const loading = ref(false)
+const poolGain = ref(null)
 
 async function loadSummary() {
   const { data } = await client.get('/dispatch/comparison/summary')
   summary.value = data
+}
+async function loadPoolGain() {
+  try {
+    const { data } = await client.get('/dispatch/pool-gain')
+    if (data.available) poolGain.value = data
+  } catch { /* 投影未跑時略過 */ }
 }
 async function loadRows() {
   loading.value = true
@@ -22,9 +29,15 @@ async function loadRows() {
     loading.value = false
   }
 }
-onMounted(async () => { await loadSummary(); await loadRows() })
+onMounted(async () => { await loadSummary(); await loadPoolGain(); await loadRows() })
 
 function pct(n) { return (n || 0).toFixed(1) }
+// 共乘後相對人工的總節省率
+function poolTotalPct() {
+  if (!poolGain.value || !summary.value) return 0
+  const h = summary.value.group.human_vehicle_days
+  return h ? (100 * (h - poolGain.value.group.v_pool) / h).toFixed(1) : 0
+}
 </script>
 
 <template>
@@ -47,8 +60,39 @@ function pct(n) { return (n || 0).toFixed(1) }
     </div>
     <p class="small text-muted">
       共 {{ summary.group.orders }} 趟成行單;自動排班未排入 {{ summary.group.vroom_unassigned }} 趟(±30 分時間窗)。
-      數字為潛在上限,未計司機排休/即時路況等人工隱含限制。
+      已納入司機實務約束(前後40分/趟、8h工時、06-18時段、共乘需同意),為保守且貼近實務之估計。
     </p>
+
+    <!-- 共乘增益 -->
+    <div v-if="poolGain" class="card shadow-sm mb-3 border-info">
+      <div class="card-header bg-info-subtle d-flex justify-content-between align-items-center py-2">
+        <span>🤝 共乘增益(若推薦組取得同意)</span>
+        <RouterLink to="/pool-suggest" class="btn btn-sm btn-outline-primary">前往共乘建議</RouterLink>
+      </div>
+      <div class="card-body">
+        <div class="row g-3">
+          <div class="col-6 col-md-3"><div class="text-center">
+            <div class="h4 mb-0">{{ summary.group.human_vehicle_days }}
+              → {{ summary.group.vroom_vehicle_days }}
+              → <span class="text-info fw-bold">{{ poolGain.group.v_pool }}</span></div>
+            <small class="text-muted">車日:人工 → 自動 → +共乘</small></div></div>
+          <div class="col-6 col-md-3"><div class="text-center">
+            <div class="display-6 fw-bold text-success">↓{{ poolTotalPct() }}%</div>
+            <small class="text-muted">共乘後 vs 人工(總節省)</small></div></div>
+          <div class="col-6 col-md-3"><div class="text-center">
+            <div class="display-6 fw-bold text-primary">+{{ poolGain.group.extra_saved_pct_vs_now }}%</div>
+            <small class="text-muted">較現況再省({{ poolGain.group.saved_vehicles }} 車日)</small></div></div>
+          <div class="col-6 col-md-3"><div class="text-center">
+            <div class="h4 mb-0">{{ poolGain.group.ask_groups }} 組 / {{ poolGain.group.recurring_pairs }} 對</div>
+            <small class="text-muted">待徵詢組數 / 常態共乘對</small></div></div>
+        </div>
+        <p class="small text-muted mb-0 mt-2">
+          僅需對 {{ poolGain.group.ask_groups }} 組(約占 2% 趟次)徵得共乘同意,即可把節省由
+          ↓{{ pct(summary.group.saved_pct) }}% 推進到 ↓{{ poolTotalPct() }}%;其中 {{ poolGain.group.recurring_pairs }}
+          對為反覆同行,適合一次徵長期同意。
+        </p>
+      </div>
+    </div>
 
     <!-- 各車行 -->
     <h6 class="text-muted mb-2 mt-3">各車行</h6>

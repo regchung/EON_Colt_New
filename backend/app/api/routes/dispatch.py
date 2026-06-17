@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.dispatch_comparison import DispatchComparison
 from app.models.order import Order
+from app.models.pool_projection import PoolProjection
 from app.models.route import RouteStop
 from app.models.user import User
 from app.services import (
@@ -58,6 +59,33 @@ def pool_suggest_day(
     if r is None:
         raise HTTPException(status_code=404, detail="該日該車行無成行單或無可用車")
     return r
+
+
+@router.get("/pool-gain")
+def pool_gain(db: Session = Depends(get_db)):
+    """共乘增益總覽(讀 pool_projection):現況車日 → 推薦組全同意後車日 + 額外省幅。"""
+    rows = list(db.scalars(select(PoolProjection).order_by(PoolProjection.fleet)).all())
+    by_fleet = {}
+    g_now = g_pool = g_saved = g_ask = g_days = 0
+    for r in rows:
+        by_fleet[r.fleet] = {
+            "days": r.days, "v_now": r.v_now, "v_pool": r.v_pool,
+            "saved_vehicles": r.saved_vehicles, "ask_groups": r.ask_groups,
+            "extra_saved_pct_vs_now": round(100 * r.saved_vehicles / r.v_now, 1) if r.v_now else 0,
+        }
+        g_now += r.v_now; g_pool += r.v_pool; g_saved += r.saved_vehicles
+        g_ask += r.ask_groups; g_days = max(g_days, r.days)
+    recurring = recurring_pairs.find(db, min_days=3)["pairs_found"]
+    return {
+        "available": bool(rows),
+        "group": {
+            "v_now": g_now, "v_pool": g_pool, "saved_vehicles": g_saved,
+            "ask_groups": g_ask,
+            "extra_saved_pct_vs_now": round(100 * g_saved / g_now, 1) if g_now else 0,
+            "recurring_pairs": recurring,
+        },
+        "by_fleet": by_fleet,
+    }
 
 
 @router.get("/pool-recurring")

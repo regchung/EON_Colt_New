@@ -25,6 +25,7 @@ g = data["summary"]["group"]
 by_fleet = data["summary"]["by_fleet"]
 top = data["top_days"]
 ov = data["overview"].split("|")
+pool = data.get("pool_gain")  # 共乘增益(可選)
 
 styles = getSampleStyleSheet()
 def S(name, **kw):
@@ -177,7 +178,31 @@ story.append(table(rows, [24*mm, 20*mm, 20*mm, 20*mm, 20*mm, 18*mm, 16*mm],
 gap(10)
 
 # ---------- 解讀與限制 ----------
-P("六、解讀與限制", h2)
+# ---------- 共乘增益 ----------
+if pool:
+    pg = pool["group"]
+    human = g["human_vehicle_days"]
+    auto = g["vroom_vehicle_days"]
+    pooled = pg["v_pool"]
+    total_pct = round(100 * (human - pooled) / human, 1) if human else 0
+    P("六、共乘增益(若推薦組取得同意)", h2)
+    P(f"目前僅約 3.5% 乘客已同意共乘。若針對系統挑出的 <b>{pg['ask_groups']} 組</b>(約占 2% 趟次)"
+      f"徵得同意,集團用車可由自動的 {auto} 車日再降至 <b>{pooled}</b> 車日,"
+      f"<b>較現況再省 {pg['saved_vehicles']} 車日(↓{pg['extra_saved_pct_vs_now']}%)</b>;"
+      f"相對人工的總節省由 ↓{g['saved_pct']}% 提升至 <b>↓{total_pct}%</b>。")
+    prows = [["車行", "現況車日", "共乘後車日", "額外省", "需徵詢組"]]
+    for f, s in pool["by_fleet"].items():
+        prows.append([f, str(s["v_now"]), str(s["v_pool"]),
+                      f"↓{s['extra_saved_pct_vs_now']}%", str(s["ask_groups"])])
+    story.append(table(prows, [34*mm, 30*mm, 32*mm, 26*mm, 26*mm],
+                       aligns={1: "CENTER", 2: "CENTER", 3: "CENTER", 4: "CENTER"}))
+    gap(4)
+    P(f"另發現 <b>{pg.get('recurring_pairs', 0)} 組常態共乘對</b>(反覆在相近時間/起訖點同行,最高同行達數十日),"
+      "最適合一次徵得長期同意,徵詢效率遠高於逐日。", small)
+    gap(8)
+
+# ---------- 解讀與限制 ----------
+P("七、解讀與限制", h2)
 _un = g['vroom_unassigned'] // 2  # summary 以 VROOM 任務數計(每趟 2),換算回趟數
 for line in [
     "<b>本版已納入司機營運實況約束</b>(前後 40 分/趟、8h 工時上限、06:00–18:00 服務時段、"
@@ -192,7 +217,7 @@ for line in [
 gap(8)
 
 # ---------- 結論 ----------
-P("七、結論與後續", h2)
+P("八、結論與後續", h2)
 P(f"在 4 個車行 220 個營運日、{g['orders']} 趟真實訂單上,於<b>司機實務約束下</b>,自動排班仍以更少車輛"
   f"服務逾 95% 趟次(集團整體 ↓{g['saved_pct']}%,有量車行台北 ↓{by_fleet.get('台北',{}).get('saved_pct',0)}%、"
   f"新北 ↓{by_fleet.get('新北',{}).get('saved_pct',0)}%,{g['days_vroom_better']}/{g['days']} 天自動更省),"
