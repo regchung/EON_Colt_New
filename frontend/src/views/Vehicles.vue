@@ -1,8 +1,37 @@
 <script setup>
 import { onMounted, ref, reactive } from 'vue'
 import { useVehiclesStore } from '../stores/vehicles'
+import client from '../api/client'
 
 const store = useVehiclesStore()
+
+// --- 車隊名冊匯入 ---
+const fileInput = ref(null)
+const importing = ref(false)
+const importResult = ref(null)
+const importError = ref('')
+
+async function uploadFleet(e) {
+  const f = e.target.files?.[0]
+  if (!f) return
+  importing.value = true
+  importResult.value = null
+  importError.value = ''
+  try {
+    const fd = new FormData()
+    fd.append('file', f)
+    const { data } = await client.post('/fleet/import', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    importResult.value = data
+    await store.fetchAll()
+  } catch (err) {
+    importError.value = err.response?.data?.detail || '匯入失敗'
+  } finally {
+    importing.value = false
+    if (fileInput.value) fileInput.value.value = ''
+  }
+}
 
 const blank = () => ({
   plate: '',
@@ -49,7 +78,28 @@ async function remove(v) {
 <template>
   <div class="d-flex justify-content-between align-items-center mb-3">
     <span class="text-muted">共 {{ store.items.length }} 台</span>
-    <button class="btn btn-primary" @click="openCreate">+ 新增車輛</button>
+    <div class="d-flex gap-2">
+      <button class="btn btn-outline-success" :disabled="importing"
+              @click="fileInput?.click()">
+        <span v-if="importing" class="spinner-border spinner-border-sm me-1"></span>
+        匯入車隊名冊
+      </button>
+      <input ref="fileInput" type="file" accept=".xls,.xlsx" class="d-none" @change="uploadFleet" />
+      <button class="btn btn-primary" @click="openCreate">+ 新增車輛</button>
+    </div>
+  </div>
+
+  <p class="small text-muted mb-3">
+    「匯入車隊名冊」可上傳司機/車輛主檔(.xls/.xlsx),回填真實可載客數、福祉能力,
+    以及<strong>出車起點/收車終點</strong>(以車牌冪等;排班會讓每車首站自起點出發、末站返回終點)。
+  </p>
+
+  <div v-if="importError" class="alert alert-danger">{{ importError }}</div>
+  <div v-if="importResult" class="alert alert-success">
+    匯入完成:車輛 新增 {{ importResult.vehicles_created }} / 更新 {{ importResult.vehicles_updated }};
+    司機 新增 {{ importResult.drivers_created }} / 更新 {{ importResult.drivers_updated }};
+    福祉 {{ importResult.welfare }} / 一般 {{ importResult.normal }}
+    <span v-if="importResult.errors?.length" class="text-danger">;錯誤 {{ importResult.errors.length }} 列</span>
   </div>
 
   <div v-if="store.error" class="alert alert-danger">{{ store.error }}</div>
@@ -109,7 +159,7 @@ async function remove(v) {
     <table class="table table-striped table-hover align-middle">
       <thead>
         <tr>
-          <th>#</th><th>車牌</th><th>車種</th><th>座位</th><th>班別</th><th>狀態</th><th></th>
+          <th>#</th><th>車牌</th><th>車種</th><th>座位</th><th>起訖點</th><th>班別</th><th>狀態</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -122,6 +172,11 @@ async function remove(v) {
             </span>
           </td>
           <td>{{ v.seats }}</td>
+          <td>
+            <span v-if="v.start_lng != null" class="badge bg-info text-dark"
+                  :title="`起 ${v.start_lng?.toFixed(4)},${v.start_lat?.toFixed(4)} / 訖 ${v.end_lng?.toFixed(4)},${v.end_lat?.toFixed(4)}`">已設</span>
+            <span v-else class="text-muted">—</span>
+          </td>
           <td>{{ (v.shift_start || '').slice(0,5) }} ~ {{ (v.shift_end || '').slice(0,5) }}</td>
           <td>
             <span class="badge" :class="v.active ? 'bg-success' : 'bg-secondary'">
@@ -134,7 +189,7 @@ async function remove(v) {
           </td>
         </tr>
         <tr v-if="!store.items.length">
-          <td colspan="7" class="text-center text-muted py-4">尚無車輛,點右上角新增。</td>
+          <td colspan="8" class="text-center text-muted py-4">尚無車輛,點右上角新增。</td>
         </tr>
       </tbody>
     </table>

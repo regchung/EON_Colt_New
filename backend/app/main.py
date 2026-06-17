@@ -12,6 +12,7 @@ from app.api.routes import (
     dispatch,
     driver,
     drivers,
+    fleet,
     health,
     history,
     orders,
@@ -68,3 +69,4 @@ app.include_router(users.router, prefix=settings.API_PREFIX)
 app.include_router(reports.router, prefix=settings.API_PREFIX)
 app.include_router(driver.router, prefix=settings.API_PREFIX, dependencies=protected)
 app.include_router(history.router, prefix=settings.API_PREFIX, dependencies=protected)
+app.include_router(fleet.router, prefix=settings.API_PREFIX, dependencies=protected)

@@ -60,10 +60,21 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
             points.append(k)
         return index[k]
 
-    veh_start = {}
+    # 車輛出車起點 / 收車終點(start≠end);缺則退化到 depot
+    def _first(*pairs):
+        for lng, lat in pairs:
+            if lng is not None and lat is not None:
+                return (lng, lat)
+        return None
+
+    veh_se: dict[int, tuple[int, int]] = {}
     for v in vehicles:
-        if v.depot_lng is not None and v.depot_lat is not None:
-            veh_start[v.id] = pt(v.depot_lng, v.depot_lat)
+        s = _first((v.start_lng, v.start_lat), (v.depot_lng, v.depot_lat))
+        e = _first((v.end_lng, v.end_lat), (v.start_lng, v.start_lat), (v.depot_lng, v.depot_lat))
+        if s is not None:
+            si = pt(*s)
+            ei = pt(*e) if e is not None else si
+            veh_se[v.id] = (si, ei)
     ord_pts = {o.id: (pt(o.pickup_lng, o.pickup_lat), pt(o.dropoff_lng, o.dropoff_lat)) for o in orders}
 
     m = matrix_svc.build_matrix(points)
@@ -78,9 +89,8 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
         kw = dict(id=v.id, profile="car", capacity=[max(1, v.seats or 1)],
                   skills={1} if v.type == "welfare" else set(),
                   time_window=vroom.TimeWindow(0, 86399))
-        if v.id in veh_start:
-            kw["start"] = veh_start[v.id]
-            kw["end"] = veh_start[v.id]
+        if v.id in veh_se:
+            kw["start"], kw["end"] = veh_se[v.id]
         problem.add_vehicle(vroom.Vehicle(**kw))
     for o in orders:
         p_idx, d_idx = ord_pts[o.id]

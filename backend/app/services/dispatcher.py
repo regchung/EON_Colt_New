@@ -41,6 +41,14 @@ def _is_welfare(o: Order) -> bool:
     return o.vehicle_type == "welfare" or bool(o.need_wheelchair)
 
 
+def _first_coord(*pairs) -> tuple[float, float] | None:
+    """回傳第一組非空的 (lng, lat);用於 start/end 的優先序退化。"""
+    for lng, lat in pairs:
+        if lng is not None and lat is not None:
+            return (lng, lat)
+    return None
+
+
 def run_dispatch(db: Session, service_date: date) -> dict:
     # 1) 取當日可排訂單(已地理編碼)與可用車輛
     orders = list(
@@ -80,10 +88,16 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             points.append(key)
         return index[key]
 
-    veh_start = {}
+    # 車輛出車起點 / 收車終點(start≠end);缺則退化到 depot
+    veh_se: dict[int, tuple[int, int]] = {}
     for v in vehicles:
-        if v.depot_lng is not None and v.depot_lat is not None:
-            veh_start[v.id] = pt_index(v.depot_lng, v.depot_lat)
+        s = _first_coord((v.start_lng, v.start_lat), (v.depot_lng, v.depot_lat))
+        e = _first_coord((v.end_lng, v.end_lat), (v.start_lng, v.start_lat),
+                         (v.depot_lng, v.depot_lat))
+        if s is not None:
+            si = pt_index(*s)
+            ei = pt_index(*e) if e is not None else si
+            veh_se[v.id] = (si, ei)
     ord_pts = {}
     for o in orders:
         ord_pts[o.id] = (
@@ -116,9 +130,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             skills={1} if v.type == "welfare" else set(),
             time_window=vroom.TimeWindow(shift[0], shift[1]),
         )
-        if v.id in veh_start:
-            kwargs["start"] = veh_start[v.id]
-            kwargs["end"] = veh_start[v.id]
+        if v.id in veh_se:
+            kwargs["start"], kwargs["end"] = veh_se[v.id]
         problem.add_vehicle(vroom.Vehicle(**kwargs))
 
     for o in orders:

@@ -11,6 +11,11 @@ class VehicleBase(BaseModel):
     shift_end: time | None = None
     depot_lng: float | None = None
     depot_lat: float | None = None
+    start_lng: float | None = None
+    start_lat: float | None = None
+    end_lng: float | None = None
+    end_lat: float | None = None
+    home_fleet: str | None = None
     active: bool = True
 
 
