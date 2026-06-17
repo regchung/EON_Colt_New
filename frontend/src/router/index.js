@@ -11,6 +11,7 @@ import Comparison from '../views/Comparison.vue'
 import PoolSuggest from '../views/PoolSuggest.vue'
 import Users from '../views/Users.vue'
 import Settings from '../views/Settings.vue'
+import Roster from '../views/Roster.vue'
 import Login from '../views/Login.vue'
 import DriverRoute from '../views/DriverRoute.vue'
 
@@ -18,6 +19,7 @@ const routes = [
   { path: '/', name: 'dashboard', component: Dashboard, meta: { title: '儀表板' } },
   { path: '/orders', name: 'orders', component: Orders, meta: { title: '訂單管理' } },
   { path: '/vehicles', name: 'vehicles', component: Vehicles, meta: { title: '車輛管理' } },
+  { path: '/roster', name: 'roster', component: Roster, meta: { title: '班表', roles: ['admin', 'dispatcher'] } },
   { path: '/drivers', name: 'drivers', component: Drivers, meta: { title: '司機管理' } },
   { path: '/addresses', name: 'addresses', component: Addresses, meta: { title: '地址簿' } },
   { path: '/map', name: 'map', component: RouteMap, meta: { title: '路線地圖' } },

@@ -21,6 +21,7 @@ from app.models.order import Order
 from app.models.route import RouteStop
 from app.models.vehicle import Vehicle
 from app.services import matrix as matrix_svc
+from app.services import roster as roster_svc
 from app.services import settings as settings_svc
 
 DELIVERY_OFFSET = 1_000_000          # 用來區分 pickup/delivery 的 step id
@@ -69,9 +70,14 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             .order_by(Order.id)
         ).all()
     )
+    # 僅納入「當日有出勤(班表)」的車輛;無班表資料的車保守視為不可用
+    duty = roster_svc.available_vehicles(db, service_date)
     vehicles = list(
-        db.scalars(select(Vehicle).where(Vehicle.active.is_(True)).order_by(Vehicle.id)).all()
-    )
+        db.scalars(
+            select(Vehicle).where(Vehicle.active.is_(True), Vehicle.id.in_(duty.keys()))
+            .order_by(Vehicle.id)
+        ).all()
+    ) if duty else []
     skipped = list(
         db.scalars(
             select(Order)
@@ -84,7 +90,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     if not orders:
         return {"error": "該日沒有可排班的已編碼訂單", "skipped_no_coords": [o.id for o in skipped]}
     if not vehicles:
-        return {"error": "沒有可用車輛(active)"}
+        return {"error": "該日無出勤車輛:請先於「班表」設定當日上班車輛(或排除例外)。"}
 
     # 2) 收集座標點(去重)→ 索引
     points: list[tuple[float, float]] = []
@@ -129,9 +135,10 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     problem.set_durations_matrix("car", arr)
 
     for v in vehicles:
-        # 彈性工時:不綁固定班別,僅受服務時段 + 工時上限約束;若車輛有班別則取交集
-        win_start = max(day_start, _secs_of_day(v.shift_start)) if v.shift_start else day_start
-        win_end = min(day_end, _secs_of_day(v.shift_end)) if v.shift_end else day_end
+        # 班別時段來自當日班表(無則用服務時段),再與服務時段取交集
+        rs, re = duty.get(v.id, (None, None))
+        win_start = max(day_start, rs) if rs is not None else day_start
+        win_end = min(day_end, re) if re is not None else day_end
         kwargs = dict(
             id=v.id,
             profile="car",
