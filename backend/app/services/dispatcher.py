@@ -23,9 +23,16 @@ from app.models.vehicle import Vehicle
 from app.services import matrix as matrix_svc
 
 DELIVERY_OFFSET = 1_000_000          # 用來區分 pickup/delivery 的 step id
-PICKUP_SERVICE = 120                 # 上車作業秒數
-DELIVERY_SERVICE = 120               # 下車作業秒數
+PICKUP_SERVICE = 1200                # 上車前作業 20 分(每趟前後共 40 分工時)
+DELIVERY_SERVICE = 1200             # 下車後作業 20 分
 UNROUTABLE = 9_999_999               # 矩陣中無法到達的填充值
+DAY_START = 6 * 3600                 # 接送服務時段起 06:00
+DAY_END = 18 * 3600                  # 接送服務時段迄 18:00
+MAX_WORK_SEC = 8 * 3600              # 每車每日工時上限 8h(行車+服務近似)
+EXCL_CAP = 100                       # 「不共乘」維度容量;未同意共乘者佔滿 → 獨佔整車
+
+
+TW = timezone(timedelta(hours=8))   # 台灣時區(資料庫存 UTC,排班以 +08 牆鐘換算)
 
 
 def _secs_of_day(t: time) -> int:
@@ -33,7 +40,8 @@ def _secs_of_day(t: time) -> int:
 
 
 def _pickup_window(o: Order) -> tuple[int, int]:
-    start = _secs_of_day(o.pickup_time.timetz())
+    dt = o.pickup_time.astimezone(TW) if o.pickup_time.tzinfo else o.pickup_time
+    start = _secs_of_day(dt.timetz())
     return start, start + (o.pickup_window_min or 0) * 60
 
 
@@ -118,17 +126,17 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     problem.set_durations_matrix("car", arr)
 
     for v in vehicles:
-        shift = (
-            (_secs_of_day(v.shift_start), _secs_of_day(v.shift_end))
-            if v.shift_start and v.shift_end
-            else (0, 86399)
-        )
+        # 彈性工時:不綁固定班別,僅受 06:00–18:00 服務時段 + 8h 工時上限約束;
+        # 若車輛有設定班別,則與服務時段取交集
+        win_start = max(DAY_START, _secs_of_day(v.shift_start)) if v.shift_start else DAY_START
+        win_end = min(DAY_END, _secs_of_day(v.shift_end)) if v.shift_end else DAY_END
         kwargs = dict(
             id=v.id,
             profile="car",
-            capacity=[max(1, v.seats or 1)],
+            capacity=[max(1, v.seats or 1), EXCL_CAP],  # [座位, 不共乘維度]
             skills={1} if v.type == "welfare" else set(),
-            time_window=vroom.TimeWindow(shift[0], shift[1]),
+            time_window=vroom.TimeWindow(win_start, win_end),
+            max_travel_time=MAX_WORK_SEC,
         )
         if v.id in veh_se:
             kwargs["start"], kwargs["end"] = veh_se[v.id]
@@ -137,6 +145,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     for o in orders:
         p_idx, d_idx = ord_pts[o.id]
         pw_start, pw_end = _pickup_window(o)
+        # 共乘需同意:未同意者第二維度佔滿 → 與任何單都無法同車(獨佔)
+        excl = 1 if o.allow_pool else EXCL_CAP
         pickup = vroom.ShipmentStep(
             id=o.id, location=p_idx, default_service=PICKUP_SERVICE,
             time_windows=[vroom.TimeWindow(pw_start, pw_end)],
@@ -146,7 +156,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         )
         problem.add_shipment(
             pickup, delivery,
-            amount=vroom.Amount([max(1, o.pax or 1)]),
+            amount=vroom.Amount([max(1, o.pax or 1), excl]),
             skills={1} if _is_welfare(o) else set(),
             priority=50,
         )
@@ -161,7 +171,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         o.status = "imported"
 
     by_id = {o.id: o for o in orders}
-    midnight = datetime.combine(service_date, time(0), tzinfo=timezone.utc)
+    midnight = datetime.combine(service_date, time(0), tzinfo=TW)
     routes_report: dict[int, list[dict]] = {}
     pickup_seq: dict[int, int] = {}     # 訂單派遣順序(只計上車)
     stop_seq: dict[int, int] = {}       # 路線停靠順序(含 start/end/上下車)

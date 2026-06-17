@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, time
+from datetime import date, time, timedelta, timezone
 
 import numpy as np
 import vroom
@@ -21,10 +21,25 @@ from app.services import matrix as matrix_svc
 DELIVERY_OFFSET = 1_000_000
 UNROUTABLE = 9_999_999
 SERVED = "已轉至正式單"
+TW = timezone(timedelta(hours=8))   # 台灣時區:上車時間以 +08 牆鐘換算當日秒數
+
+# --- 司機工時 / 共乘 營運規則 ---
+TRIP_SETUP = 1200          # 上車前 20 分(秒)
+TRIP_TEARDOWN = 1200       # 下車後 20 分(秒)→ 每趟前後共 40 分工時
+DAY_START = 6 * 3600       # 接送服務時段起 06:00
+DAY_END = 18 * 3600        # 接送服務時段迄 18:00
+MAX_WORK_SEC = 8 * 3600    # 每車每日工時上限 8h(VROOM 以行車+服務時間近似)
+EXCL_CAP = 100             # 「不共乘」維度容量;未同意共乘者佔滿 → 獨佔整車
 
 
 def _secs(t: time) -> int:
     return t.hour * 3600 + t.minute * 60 + t.second
+
+
+def _secs_tw(dt) -> int:
+    """上車 datetime 換算為台灣當日秒數(資料庫存 UTC,需轉 +08)。"""
+    local = dt.astimezone(TW) if dt.tzinfo else dt
+    return local.hour * 3600 + local.minute * 60 + local.second
 
 
 def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 30) -> dict | None:
@@ -86,22 +101,29 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
     problem = vroom.Input()
     problem.set_durations_matrix("car", arr)
     for v in vehicles:
-        kw = dict(id=v.id, profile="car", capacity=[max(1, v.seats or 1)],
+        # 彈性工時:不綁固定班別,僅受 06:00–18:00 服務時段 + 8h 工時上限約束
+        # capacity = [座位, 不共乘維度];共乘規則用第二維度表達
+        kw = dict(id=v.id, profile="car",
+                  capacity=[max(1, v.seats or 1), EXCL_CAP],
                   skills={1} if v.type == "welfare" else set(),
-                  time_window=vroom.TimeWindow(0, 86399))
+                  time_window=vroom.TimeWindow(DAY_START, DAY_END),
+                  max_travel_time=MAX_WORK_SEC)
         if v.id in veh_se:
             kw["start"], kw["end"] = veh_se[v.id]
         problem.add_vehicle(vroom.Vehicle(**kw))
     for o in orders:
         p_idx, d_idx = ord_pts[o.id]
-        s = _secs(o.pickup_time.timetz())
+        s = _secs_tw(o.pickup_time)
         welfare = o.vehicle_type == "welfare" or bool(o.need_wheelchair)
+        # 共乘需同意:未同意者第二維度佔滿 EXCL_CAP → 與任何單都無法同車(獨佔)
+        excl = 1 if o.allow_pool else EXCL_CAP
         problem.add_shipment(
-            vroom.ShipmentStep(id=o.id, location=p_idx, default_service=120,
+            vroom.ShipmentStep(id=o.id, location=p_idx, default_service=TRIP_SETUP,
                                time_windows=[vroom.TimeWindow(s, s + window_min * 60)]),
-            vroom.ShipmentStep(id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=120),
-            amount=vroom.Amount([max(1, o.pax or 1)]),
+            vroom.ShipmentStep(id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=TRIP_TEARDOWN),
+            amount=vroom.Amount([max(1, o.pax or 1), excl]),
             skills={1} if welfare else set(),
+            priority=100,  # 人工當天已全數服務 → 強制 VROOM 盡量服務,再看需幾台車
         )
 
     sol = problem.solve(exploration_level=5, nb_threads=4)
