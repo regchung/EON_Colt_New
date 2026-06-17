@@ -7,6 +7,7 @@ import Drivers from '../views/Drivers.vue'
 import Addresses from '../views/Addresses.vue'
 import RouteMap from '../views/RouteMap.vue'
 import Reports from '../views/Reports.vue'
+import Comparison from '../views/Comparison.vue'
 import Users from '../views/Users.vue'
 import Login from '../views/Login.vue'
 import DriverRoute from '../views/DriverRoute.vue'
@@ -19,6 +20,7 @@ const routes = [
   { path: '/addresses', name: 'addresses', component: Addresses, meta: { title: '地址簿' } },
   { path: '/map', name: 'map', component: RouteMap, meta: { title: '路線地圖' } },
   { path: '/reports', name: 'reports', component: Reports, meta: { title: '報表' } },
+  { path: '/comparison', name: 'comparison', component: Comparison, meta: { title: '人工 vs 自動' } },
   { path: '/users', name: 'users', component: Users, meta: { title: '使用者管理', roles: ['admin'] } },
   { path: '/driver-route', name: 'driver-route', component: DriverRoute, meta: { title: '我的路單', roles: ['driver'] } },
   { path: '/login', name: 'login', component: Login, meta: { public: true, layout: false } },

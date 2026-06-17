@@ -2,11 +2,12 @@
 from datetime import date
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import get_db
+from app.models.dispatch_comparison import DispatchComparison
 from app.models.order import Order
 from app.models.route import RouteStop
 from app.services import ai_dispatch, dispatcher, matrix, osrm, zone_affinity
@@ -122,6 +123,58 @@ def ai_insert_eval(
     }
     suggestion = ai_dispatch.evaluate_insertion(new_order_info, routes)
     return {"order_id": order_id, "ai_suggestion": suggestion}
+
+
+@router.get("/comparison/summary")
+def comparison_summary(db: Session = Depends(get_db)):
+    """人工 vs 自動 對比總覽(各車行 + 集團)。"""
+    def agg(where=None):
+        q = select(
+            func.count(), func.sum(DispatchComparison.n_orders),
+            func.sum(DispatchComparison.human_vehicles),
+            func.sum(DispatchComparison.vroom_vehicles),
+            func.sum(DispatchComparison.saved_vehicles),
+            func.sum(DispatchComparison.vroom_unassigned),
+            func.count().filter(DispatchComparison.saved_vehicles > 0),
+        )
+        if where is not None:
+            q = q.where(where)
+        days, orders, hv, vv, saved, unassigned, win_days = db.execute(q).one()
+        return {
+            "days": days or 0, "orders": int(orders or 0),
+            "human_vehicle_days": int(hv or 0), "vroom_vehicle_days": int(vv or 0),
+            "saved_vehicle_days": int(saved or 0),
+            "vroom_unassigned": int(unassigned or 0),
+            "days_vroom_better": win_days or 0,
+            "saved_pct": round(100.0 * (saved or 0) / hv, 1) if hv else 0,
+        }
+
+    by_fleet = {}
+    for (f,) in db.execute(select(DispatchComparison.fleet.distinct())).all():
+        by_fleet[f] = agg(DispatchComparison.fleet == f)
+    return {"group": agg(), "by_fleet": by_fleet}
+
+
+@router.get("/comparison")
+def comparison_list(fleet: str | None = None, limit: int = 200, db: Session = Depends(get_db)):
+    """逐日對比明細。"""
+    q = select(DispatchComparison).order_by(
+        DispatchComparison.saved_vehicles.desc(), DispatchComparison.service_date
+    )
+    if fleet:
+        q = q.where(DispatchComparison.fleet == fleet)
+    rows = list(db.scalars(q.limit(limit)).all())
+    return [
+        {
+            "fleet": r.fleet, "service_date": r.service_date.isoformat(),
+            "n_orders": r.n_orders, "human_vehicles": r.human_vehicles,
+            "vroom_vehicles": r.vroom_vehicles, "saved_vehicles": r.saved_vehicles,
+            "vroom_unassigned": r.vroom_unassigned,
+            "human_distance_km": round((r.human_distance_m or 0) / 1000, 1),
+            "vroom_drive_min": round((r.vroom_drive_sec or 0) / 60),
+        }
+        for r in rows
+    ]
 
 
 @router.get("/osrm-health")

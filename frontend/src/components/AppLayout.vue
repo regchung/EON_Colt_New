@@ -34,6 +34,7 @@ const allNav = [
   { to: '/addresses', label: '地址簿', icon: '📍', roles: ['admin', 'dispatcher'] },
   { to: '/map', label: '路線地圖', icon: '🗺️', roles: null },
   { to: '/reports', label: '報表', icon: '📈', roles: ['admin', 'dispatcher'] },
+  { to: '/comparison', label: '人工 vs 自動', icon: '🆚', roles: ['admin', 'dispatcher'] },
   { to: '/users', label: '使用者管理', icon: '👥', roles: ['admin'] },
 ]
 

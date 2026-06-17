@@ -20,6 +20,8 @@ class Order(Base):
     __tablename__ = "orders"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    source_order_no: Mapped[str | None] = mapped_column(String(40), index=True)  # 來源平台訂單編號(冪等)
+    fleet: Mapped[str | None] = mapped_column(String(20), index=True)  # 車行/子車隊(集團統一派遣標記)
     service_date: Mapped[date] = mapped_column(Date, index=True)
     pickup_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     pickup_window_min: Mapped[int] = mapped_column(Integer, default=30)

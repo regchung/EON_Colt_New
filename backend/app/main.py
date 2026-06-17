@@ -13,6 +13,7 @@ from app.api.routes import (
     driver,
     drivers,
     health,
+    history,
     orders,
     reports,
     users,
@@ -66,3 +67,4 @@ app.include_router(addresses.router, prefix=settings.API_PREFIX, dependencies=pr
 app.include_router(users.router, prefix=settings.API_PREFIX)
 app.include_router(reports.router, prefix=settings.API_PREFIX)
 app.include_router(driver.router, prefix=settings.API_PREFIX, dependencies=protected)
+app.include_router(history.router, prefix=settings.API_PREFIX, dependencies=protected)

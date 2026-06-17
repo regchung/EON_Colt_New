@@ -17,4 +17,5 @@ class Vehicle(Base):
     shift_end: Mapped[time | None] = mapped_column(Time)
     depot_lng: Mapped[float | None] = mapped_column(Float)
     depot_lat: Mapped[float | None] = mapped_column(Float)
+    home_fleet: Mapped[str | None] = mapped_column(String(20))  # 最常所屬車行(共用車池,僅標記)
     active: Mapped[bool] = mapped_column(Boolean, default=True)

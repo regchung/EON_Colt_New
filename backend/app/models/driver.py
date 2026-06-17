@@ -14,4 +14,5 @@ class Driver(Base):
     vehicle_id: Mapped[int | None] = mapped_column(
         ForeignKey("vehicles.id", ondelete="SET NULL")
     )
+    home_fleet: Mapped[str | None] = mapped_column(String(20))  # 最常所屬車行
     active: Mapped[bool] = mapped_column(Boolean, default=True)
