@@ -15,6 +15,7 @@ from app.api.routes import (
     fleet,
     health,
     history,
+    settings as settings_routes,
     orders,
     reports,
     users,
@@ -38,6 +39,9 @@ async def lifespan(app: FastAPI):
                 role="admin",
             ))
             db.commit()
+        # 補齊系統參數預設值
+        from app.services import settings as settings_svc
+        settings_svc.seed_defaults(db)
     finally:
         db.close()
     yield
@@ -70,3 +74,4 @@ app.include_router(reports.router, prefix=settings.API_PREFIX)
 app.include_router(driver.router, prefix=settings.API_PREFIX, dependencies=protected)
 app.include_router(history.router, prefix=settings.API_PREFIX, dependencies=protected)
 app.include_router(fleet.router, prefix=settings.API_PREFIX, dependencies=protected)
+app.include_router(settings_routes.router, prefix=settings.API_PREFIX)  # 端點各自 require_admin

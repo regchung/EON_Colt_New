@@ -10,6 +10,7 @@ import Reports from '../views/Reports.vue'
 import Comparison from '../views/Comparison.vue'
 import PoolSuggest from '../views/PoolSuggest.vue'
 import Users from '../views/Users.vue'
+import Settings from '../views/Settings.vue'
 import Login from '../views/Login.vue'
 import DriverRoute from '../views/DriverRoute.vue'
 
@@ -24,6 +25,7 @@ const routes = [
   { path: '/comparison', name: 'comparison', component: Comparison, meta: { title: '人工 vs 自動' } },
   { path: '/pool-suggest', name: 'pool-suggest', component: PoolSuggest, meta: { title: '共乘建議' } },
   { path: '/users', name: 'users', component: Users, meta: { title: '使用者管理', roles: ['admin'] } },
+  { path: '/settings', name: 'settings', component: Settings, meta: { title: '參數設定', roles: ['admin'] } },
   { path: '/driver-route', name: 'driver-route', component: DriverRoute, meta: { title: '我的路單', roles: ['driver'] } },
   { path: '/login', name: 'login', component: Login, meta: { public: true, layout: false } },
 ]
@@ -37,6 +39,10 @@ router.beforeEach((to) => {
   const token = localStorage.getItem('token')
   if (!to.meta.public && !token) return { name: 'login' }
   if (to.name === 'login' && token) return { path: '/' }
+  // 角色守衛:meta.roles 指定時,非該角色導回首頁
+  if (to.meta.roles && !to.meta.roles.includes(localStorage.getItem('role'))) {
+    return { path: '/' }
+  }
   return true
 })
 

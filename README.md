@@ -33,6 +33,7 @@
 | 車隊名冊匯入 | 司機/車輛主檔 → 回填真實可載客數、福祉能力、**出車起點/收車終點**(`fleet_import`) |
 | 起訖點錨定 | 車輛 `start`/`end` 座標;VROOM 令每車首站自起點出發、末站返回終點 |
 | 司機營運規則 | 前後 40 分/趟、8h 工時上限、06:00–18:00 服務時段、共乘需同意;上車時間 +08 時區換算 |
+| 系統參數設定 | `app_settings` key-value;管理者於「參數設定」頁 CRUD 派遣/共乘營運參數,即時派遣即時採用 |
 | 人工 vs 自動對比 | 逐(車行×日)以 OSRM+VROOM 重排,比人工用車/里程/可行性;前端對比頁 + PDF 報告(實務約束下集團 **↓18.4%** 車日,服務逾 95% 趟次) |
 | CI | GitHub Actions:後端 pytest(postgres)、前端 build、Docker 映像建置 |
 
@@ -205,6 +206,7 @@ SmartCar/
 | `GET /dispatch/pool-recurring?min_days=3` | 常態共乘對:反覆同時間/同起訖點同行的乘客對,適合徵長期同意 |
 | `GET /dispatch/pool-gain` | 共乘增益總覽(讀 `pool_projection`):現況→共乘後車日 + 額外省幅,供對比頁/報表 |
 | `GET /dispatch/driver-suggest?passenger=` · `GET /dispatch/driver-loyalty` | 常客固定駕駛:乘客→慣用駕駛建議 / 高忠誠乘客清單(軟性偏好) |
+| `GET/POST /settings` · `PUT/DELETE /settings/{key}` | 系統參數設定 CRUD(**限系統管理者**);即時派遣讀取營運參數 |
 
 > 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`pool_suggest.project_and_store()` 跑共乘增益投影(寫 `pool_projection`);`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`(含「共乘增益」一節)。
 

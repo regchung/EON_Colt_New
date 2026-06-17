@@ -21,6 +21,7 @@ from app.models.order import Order
 from app.models.route import RouteStop
 from app.models.vehicle import Vehicle
 from app.services import matrix as matrix_svc
+from app.services import settings as settings_svc
 
 DELIVERY_OFFSET = 1_000_000          # 用來區分 pickup/delivery 的 step id
 PICKUP_SERVICE = 1200                # 上車前作業 20 分(每趟前後共 40 分工時)
@@ -121,22 +122,23 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         dtype=np.uint32,
     )
 
-    # 4) 組 VROOM 問題
+    # 4) 組 VROOM 問題(營運參數由系統設定提供,可由管理者於設定頁調整)
+    prm = settings_svc.dispatch_params(db)
+    day_start, day_end = prm["day_start_sec"], prm["day_end_sec"]
     problem = vroom.Input()
     problem.set_durations_matrix("car", arr)
 
     for v in vehicles:
-        # 彈性工時:不綁固定班別,僅受 06:00–18:00 服務時段 + 8h 工時上限約束;
-        # 若車輛有設定班別,則與服務時段取交集
-        win_start = max(DAY_START, _secs_of_day(v.shift_start)) if v.shift_start else DAY_START
-        win_end = min(DAY_END, _secs_of_day(v.shift_end)) if v.shift_end else DAY_END
+        # 彈性工時:不綁固定班別,僅受服務時段 + 工時上限約束;若車輛有班別則取交集
+        win_start = max(day_start, _secs_of_day(v.shift_start)) if v.shift_start else day_start
+        win_end = min(day_end, _secs_of_day(v.shift_end)) if v.shift_end else day_end
         kwargs = dict(
             id=v.id,
             profile="car",
             capacity=[max(1, v.seats or 1), EXCL_CAP],  # [座位, 不共乘維度]
             skills={1} if v.type == "welfare" else set(),
             time_window=vroom.TimeWindow(win_start, win_end),
-            max_travel_time=MAX_WORK_SEC,
+            max_travel_time=prm["max_work_sec"],
         )
         if v.id in veh_se:
             kwargs["start"], kwargs["end"] = veh_se[v.id]
@@ -145,14 +147,14 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     for o in orders:
         p_idx, d_idx = ord_pts[o.id]
         pw_start, pw_end = _pickup_window(o)
-        # 共乘需同意:未同意者第二維度佔滿 → 與任何單都無法同車(獨佔)
-        excl = 1 if o.allow_pool else EXCL_CAP
+        # 共乘需同意(設定可關閉):需同意但未同意者第二維度佔滿 → 獨佔整車
+        excl = EXCL_CAP if (prm["require_consent"] and not o.allow_pool) else 1
         pickup = vroom.ShipmentStep(
-            id=o.id, location=p_idx, default_service=PICKUP_SERVICE,
+            id=o.id, location=p_idx, default_service=prm["setup_sec"],
             time_windows=[vroom.TimeWindow(pw_start, pw_end)],
         )
         delivery = vroom.ShipmentStep(
-            id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=DELIVERY_SERVICE,
+            id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=prm["teardown_sec"],
         )
         problem.add_shipment(
             pickup, delivery,
