@@ -15,7 +15,8 @@ from app.models.pool_projection import PoolProjection
 from app.models.route import RouteStop
 from app.models.user import User
 from app.services import (
-    ai_dispatch, dispatcher, matrix, osrm, pool_suggest, recurring_pairs, zone_affinity,
+    ai_dispatch, dispatcher, driver_affinity, matrix, osrm, pool_suggest,
+    recurring_pairs, zone_affinity,
 )
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
@@ -59,6 +60,19 @@ def pool_suggest_day(
     if r is None:
         raise HTTPException(status_code=404, detail="該日該車行無成行單或無可用車")
     return r
+
+
+@router.get("/driver-suggest")
+def driver_suggest(passenger: str, min_trips: int = 5, min_ratio: float = 0.5,
+                   db: Session = Depends(get_db)):
+    """常客固定駕駛建議:單一乘客的慣用駕駛排行 + 是否達高信心(軟性偏好,供人工指派參考)。"""
+    return driver_affinity.suggest(db, passenger, min_trips, min_ratio)
+
+
+@router.get("/driver-loyalty")
+def driver_loyalty(min_trips: int = 5, min_ratio: float = 0.5, db: Session = Depends(get_db)):
+    """高忠誠乘客清單(集中度達門檻):適合排班優先沿用慣用駕駛。"""
+    return driver_affinity.loyal_passengers(db, min_trips, min_ratio)
 
 
 @router.get("/pool-gain")

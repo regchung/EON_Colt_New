@@ -204,6 +204,7 @@ SmartCar/
 | `POST /dispatch/pool-consent` | 登錄共乘同意/撤回(留痕 by/at);同意後排班自動納入共乘 |
 | `GET /dispatch/pool-recurring?min_days=3` | 常態共乘對:反覆同時間/同起訖點同行的乘客對,適合徵長期同意 |
 | `GET /dispatch/pool-gain` | 共乘增益總覽(讀 `pool_projection`):現況→共乘後車日 + 額外省幅,供對比頁/報表 |
+| `GET /dispatch/driver-suggest?passenger=` · `GET /dispatch/driver-loyalty` | 常客固定駕駛:乘客→慣用駕駛建議 / 高忠誠乘客清單(軟性偏好) |
 
 > 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`pool_suggest.project_and_store()` 跑共乘增益投影(寫 `pool_projection`);`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`(含「共乘增益」一節)。
 
