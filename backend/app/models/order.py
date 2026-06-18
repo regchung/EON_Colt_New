@@ -44,6 +44,7 @@ class Order(Base):
     pool_consent_by: Mapped[str | None] = mapped_column(String(50))  # 徵詢/登錄者(行控)
     note: Mapped[str | None] = mapped_column(Text)
 
+    case_tag: Mapped[str | None] = mapped_column(Text)  # 個案/地標識別(乘客姓名+地址補充+醫療設施名稱)供固定行程匹配
     status: Mapped[str] = mapped_column(String(20), default="imported", index=True)
     assigned_vehicle_id: Mapped[int | None] = mapped_column(
         ForeignKey("vehicles.id", ondelete="SET NULL")

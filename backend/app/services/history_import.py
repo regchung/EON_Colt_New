@@ -219,6 +219,13 @@ def import_history(db: Session, content: bytes, filename: str) -> dict:
             order.need_wheelchair = wheelchair > 0
             order.allow_pool = _s(r.get("是否願意共乘")) == "True"
             order.note = _s(r.get("Memo")) or _s(r.get("附註(200字)"))
+            # 個案/地標標籤:供「固定行程」匹配(乘客姓名+地址補充+醫療設施名稱+Memo)
+            order.case_tag = " ".join(filter(None, [
+                _s(r.get("乘客姓名")),
+                _s(r.get("[上車]乘客地址補充")), _s(r.get("[下車]乘客地址補充")),
+                _s(r.get("[上車]醫療設施名稱")), _s(r.get("[下車]醫療設施名稱")),
+                _s(r.get("Memo")),
+            ])) or None
             order.status = STATUS_MAP.get(_s(r.get("CurrentStatus")) or "", "imported")
             order.assigned_vehicle_id = vehicle.id if vehicle else None
             db.flush()

@@ -1,4 +1,6 @@
-"""固定行程指定司機 CRUD(需派遣員以上)。"""
+"""固定行程指定司機 CRUD + 某日比對預覽(需派遣員以上)。"""
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -9,6 +11,7 @@ from app.models.driver import Driver
 from app.models.fixed_route import FixedRoute
 from app.models.user import User
 from app.schemas.fixed_route import FixedRouteCreate, FixedRouteOut, FixedRouteUpdate
+from app.services import fixed_route_match
 
 router = APIRouter(prefix="/fixed-routes", tags=["fixed-routes"])
 
@@ -43,6 +46,13 @@ def list_with_status(db: Session = Depends(get_db), _: User = Depends(require_di
             "driver_plate": plate, "driver_has_vehicle": plate is not None,
         })
     return out
+
+
+@router.get("/match")
+def match_preview(service_date: date, db: Session = Depends(get_db),
+                  _: User = Depends(require_dispatcher)):
+    """比對某日訂單與固定行程規則:誰該接、司機是否有車可派。"""
+    return fixed_route_match.match_for_date(db, service_date)
 
 
 @router.post("", response_model=FixedRouteOut, status_code=201)

@@ -3,6 +3,12 @@ import { onMounted, ref } from 'vue'
 import client from '../api/client'
 
 const rows = ref([])
+const matchDate = ref(new Date().toISOString().slice(0, 10))
+const match = ref(null)
+async function runMatch() {
+  const { data } = await client.get('/fixed-routes/match', { params: { service_date: matchDate.value } })
+  match.value = data
+}
 const error = ref('')
 const toast = ref('')
 const TIME_SLOTS = ['全天', '早', '午', '午後', '早晚']
@@ -82,6 +88,37 @@ async function del(r) {
       <div class="col-6 col-md-2 d-flex align-items-end gap-2">
         <button class="btn btn-sm btn-primary" @click="save">{{ form.id ? '更新' : '新增' }}</button>
         <button v-if="form.id" class="btn btn-sm btn-outline-secondary" @click="reset">取消</button></div>
+    </div>
+  </div></div>
+
+  <!-- 比對某日訂單 -->
+  <div class="card shadow-sm mb-3 border-info"><div class="card-body">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+      <span class="fw-semibold">🔎 比對某日訂單</span>
+      <input v-model="matchDate" type="date" class="form-control form-control-sm" style="width:160px" />
+      <button class="btn btn-sm btn-info text-dark" @click="runMatch">比對</button>
+      <span v-if="match" class="small text-muted">符合 {{ match.matched }} 單,其中可派(司機有車) {{ match.pinnable }} 單</span>
+    </div>
+    <div v-if="match">
+      <div v-if="match.unresolved_rules.length" class="alert alert-warning py-2 small mb-2">
+        ⚠️ 有匹配但司機無車(需到「司機車輛」補):
+        <span v-for="u in match.unresolved_rules" :key="u.driver_name" class="badge bg-warning text-dark me-1">{{ u.label }}→{{ u.driver_name }}</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle small mb-0">
+          <thead class="table-light"><tr><th>時間</th><th>路線</th><th>指定司機</th><th>可派車</th><th>乘客</th><th>路線</th></tr></thead>
+          <tbody>
+            <tr v-for="(it, i) in match.items" :key="i">
+              <td class="text-nowrap">{{ it.time }}</td>
+              <td>{{ it.label }}</td><td>{{ it.driver_name }}</td>
+              <td><span :class="it.resolvable ? 'badge bg-success' : 'badge bg-danger'">{{ it.plate || '無車' }}</span></td>
+              <td>{{ it.passenger }}</td>
+              <td class="text-muted">{{ it.pickup }} → {{ it.dropoff }}</td>
+            </tr>
+            <tr v-if="!match.items.length"><td colspan="6" class="text-center text-muted py-2">該日無符合固定行程的訂單</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div></div>
 

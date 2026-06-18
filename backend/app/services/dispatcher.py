@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 from app.models.order import Order
 from app.models.route import RouteStop
 from app.models.vehicle import Vehicle
+from app.services import fixed_route_match
 from app.services import matrix as matrix_svc
 from app.services import roster as roster_svc
 from app.services import settings as settings_svc
@@ -33,6 +34,7 @@ DAY_END = 18 * 3600                  # 接送服務時段迄 18:00
 MAX_WORK_SEC = 8 * 3600              # 每車每日工時上限 8h(行車+服務近似)
 EXCL_CAP = 100                       # 「不共乘」維度容量;未同意共乘者佔滿 → 獨佔整車
 LOCK_SKILL_BASE = 10000              # ongoing 訂單以「唯一技能」硬鎖原車(避開福祉 skill=1)
+PIN_SKILL_BASE = 20000              # 固定行程以「唯一技能」硬綁指定車
 
 
 TW = timezone(timedelta(hours=8))   # 台灣時區(資料庫存 UTC,排班以 +08 牆鐘換算)
@@ -111,6 +113,22 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             ).all()
         )
 
+    # 固定行程:把符合規則的訂單釘給指定司機的車(以唯一技能硬綁);指定車強制納入
+    fr = fixed_route_match.match_for_date(db, service_date)
+    pend_ids = {o.id for o in orders}
+    fixed_pins = {oid: vid for oid, vid in fr["pins"].items() if oid in pend_ids}
+    pin_vehicle_ids = set(fixed_pins.values())
+    extra_pin = pin_vehicle_ids - {v.id for v in vehicles}
+    if extra_pin:
+        vehicles.extend(
+            db.scalars(
+                select(Vehicle).where(Vehicle.id.in_(extra_pin), Vehicle.active.is_(True))
+                .order_by(Vehicle.id)
+            ).all()
+        )
+        pin_vehicle_ids &= {v.id for v in vehicles}  # 仍取不到(停用)者放棄釘選
+        fixed_pins = {o: v for o, v in fixed_pins.items() if v in pin_vehicle_ids}
+
     if not orders:
         return {"error": "該日沒有可排班的已編碼訂單", "skipped_no_coords": [o.id for o in skipped]}
     if not vehicles:
@@ -169,6 +187,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         skills = {1} if v.type == "welfare" else set()
         if v.id in lock_vehicles:
             skills.add(LOCK_SKILL_BASE + v.id)   # 鎖住其進行中行程的專屬技能
+        if v.id in pin_vehicle_ids:
+            skills.add(PIN_SKILL_BASE + v.id)    # 固定行程:接受被釘給此車的單
         kwargs = dict(
             id=v.id,
             profile="car",
@@ -193,11 +213,14 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         delivery = vroom.ShipmentStep(
             id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=prm["teardown_sec"],
         )
+        sk = {1} if _is_welfare(o) else set()
+        if o.id in fixed_pins:
+            sk.add(PIN_SKILL_BASE + fixed_pins[o.id])   # 固定行程:硬綁指定車
         problem.add_shipment(
             pickup, delivery,
             amount=vroom.Amount([max(1, o.pax or 1), excl]),
-            skills={1} if _is_welfare(o) else set(),
-            priority=50,
+            skills=sk,
+            priority=80 if o.id in fixed_pins else 50,   # 固定行程優先排入
         )
 
     # 進行中訂單:delivery-only job,以專屬技能硬鎖原車(乘客已在車上,初始載重佔位到下車)
@@ -303,6 +326,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         "assigned": len(assigned_ids),
         "unassigned": unassigned,
         "ongoing_locked": len(ongoing),
+        "fixed_pinned": len(fixed_pins),
         "skipped_no_coords": [o.id for o in skipped],
         "total_duration_sec": int(sol.summary.duration),
         "routes": routes_report,
