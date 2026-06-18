@@ -132,3 +132,42 @@ def test_forecast_weekday_names():
     assert len(forecast.WD_NAMES) == 7
     assert forecast.WD_NAMES[0] == "週一"
     assert forecast.WD_NAMES[6] == "週日"
+
+
+# ---------- doc_ingest(文件智慧匯入,純函式) ----------
+def test_doc_ingest_extract_text_csv():
+    from app.services import doc_ingest
+    txt = doc_ingest.extract_text("x.csv", "服務日期,上車\n2026-06-20,甲\n".encode("utf-8"))
+    assert "服務日期" in txt and "2026-06-20" in txt
+
+
+def test_doc_ingest_unsupported_ext():
+    from app.services import doc_ingest
+    with pytest.raises(ValueError):
+        doc_ingest.extract_text("x.zip", b"...")
+
+
+def test_doc_ingest_strip_json_fence():
+    from app.services import doc_ingest
+    assert doc_ingest._strip_json('```json\n[{"a":1}]\n```') == '[{"a":1}]'
+    assert doc_ingest._strip_json('前言[{"a":1}]後語') == '[{"a":1}]'
+
+
+def test_doc_ingest_coerce():
+    from app.services import doc_ingest
+    o = doc_ingest._coerce({
+        "pickup_time": "09:00", "vehicle_type": "福祉車", "pax": "2",
+        "allow_pool": "是", "need_wheelchair": "N",
+        "service_date": "2026-06-20", "pickup_address": "A", "dropoff_address": "B",
+    }, None)
+    assert o["vehicle_type"] == "welfare"
+    assert o["pax"] == 2
+    assert o["allow_pool"] is True
+    assert o["need_wheelchair"] is False
+    assert o["pickup_time"] == "2026-06-20T09:00:00"
+
+
+def test_doc_ingest_coerce_default_date():
+    from app.services import doc_ingest
+    o = doc_ingest._coerce({"pickup_address": "A", "dropoff_address": "B"}, "2026-07-01")
+    assert o["service_date"] == "2026-07-01"

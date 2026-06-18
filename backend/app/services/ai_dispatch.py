@@ -20,21 +20,22 @@ _HEADERS = {
 }
 
 
-def _call_claude(prompt: str, system: str = "") -> str:
+def _call_claude(prompt: str, system: str = "", max_tokens: int = 1024,
+                 timeout: float = 30) -> str:
     """同步呼叫 Claude API，回傳文字。無 API key 時回傳提示訊息。"""
     if not settings.ANTHROPIC_API_KEY:
         return "（未設定 ANTHROPIC_API_KEY，AI 功能停用）"
 
     body: dict[str, Any] = {
         "model": settings.AI_DISPATCH_MODEL,
-        "max_tokens": 1024,
+        "max_tokens": max_tokens,
         "messages": [{"role": "user", "content": prompt}],
     }
     if system:
         body["system"] = system
 
     headers = {**_HEADERS, "x-api-key": settings.ANTHROPIC_API_KEY}
-    resp = httpx.post(_API_URL, json=body, headers=headers, timeout=30)
+    resp = httpx.post(_API_URL, json=body, headers=headers, timeout=timeout)
     resp.raise_for_status()
     return resp.json()["content"][0]["text"]
 

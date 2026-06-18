@@ -13,6 +13,7 @@ from app.crud.order import order as crud
 from app.db.session import get_db
 from app.models.order import Order
 from app.schemas.order import OrderCreate, OrderOut, OrderUpdate
+from app.services import doc_ingest
 from app.services.geocode import geocode
 from app.services.importer import parse_orders
 
@@ -140,6 +141,67 @@ def _geocode_order(db: Session, o: Order) -> dict:
         "id": o.id,
         "pickup": {"found": pk.found, "precision": pk.precision},
         "dropoff": {"found": dp.found, "precision": dp.precision},
+    }
+
+
+@router.post("/import-doc")
+async def import_doc(
+    file: UploadFile = File(...),
+    service_date: date | None = None,
+    db: Session = Depends(get_db),
+):
+    """AI 文件智慧匯入:上傳 PDF/Word/Excel/CSV/文字 → Claude 抽取訂單 → 建單 + 地理編碼。
+
+    ⚠️ 會將文件原文(可能含個資)送往 Claude API 抽取;正式處理真實 PII 前應改地端模型。
+    service_date 為「文件未標明日期時」的預設服務日期。
+    """
+    content = await file.read()
+    filename = file.filename or ""
+    try:
+        text = doc_ingest.extract_text(filename, content)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=400, detail="未設定 ANTHROPIC_API_KEY,無法使用文件智慧匯入")
+
+    default_date = service_date.isoformat() if service_date else None
+    try:
+        payloads, errors, _raw = doc_ingest.extract_orders(text, default_date)
+    except Exception as e:  # noqa: BLE001 — Claude/網路錯誤統一回 502
+        raise HTTPException(status_code=502, detail=f"AI 抽取失敗:{e}")
+
+    created_orders: list[Order] = []
+    created = 0
+    for i, payload in enumerate(payloads):
+        try:
+            created_orders.append(crud.create(db, OrderCreate(**payload)))
+            created += 1
+        except (ValidationError, Exception) as exc:  # noqa: BLE001
+            errors.append({"row": f"order#{i + 1}", "error": str(exc)})
+
+    geo_done = geo_failed = 0
+    for o in created_orders:
+        r = _geocode_order(db, o)
+        if r["pickup"]["found"] and r["dropoff"]["found"]:
+            geo_done += 1
+        else:
+            geo_failed += 1
+
+    return {
+        "filename": filename,
+        "extracted": len(payloads),
+        "created": created,
+        "failed": len(errors),
+        "geocoded": {"done": geo_done, "failed": geo_failed},
+        "errors": errors,
+        "preview": [
+            {"service_date": o.service_date.isoformat(),
+             "pickup_time": o.pickup_time.strftime("%Y-%m-%d %H:%M") if o.pickup_time else None,
+             "passenger_name": o.passenger_name,
+             "pickup_address": o.pickup_address, "dropoff_address": o.dropoff_address,
+             "vehicle_type": o.vehicle_type, "pax": o.pax}
+            for o in created_orders[:20]
+        ],
     }
 
 

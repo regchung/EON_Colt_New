@@ -105,6 +105,37 @@ async function onFileChosen(e) {
   }
 }
 
+// --- AI 文件智慧匯入 ---
+const docFileInput = ref(null)
+const docImporting = ref(false)
+const docReport = ref(null)
+
+function pickDocFile() {
+  docReport.value = null
+  docFileInput.value?.click()
+}
+
+async function onDocFileChosen(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  docImporting.value = true
+  docReport.value = null
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    // 文件未標日期時,預設用篩選列的服務日期(若有)
+    const params = filters.service_date ? { service_date: filters.service_date } : {}
+    const { data } = await client.post('/orders/import-doc', fd, { params, timeout: 120000 })
+    docReport.value = data
+    await store.fetchAll()
+  } catch (err) {
+    docReport.value = { error: err?.response?.data?.detail || err.message || '匯入失敗' }
+  } finally {
+    docImporting.value = false
+    e.target.value = ''
+  }
+}
+
 // --- 地理編碼 ---
 const geocoding = ref(false)
 const geocodeReport = ref(null)
@@ -268,6 +299,10 @@ async function adoptVehicle(orderId, vehicleId) {
       <button class="btn btn-outline-success" :disabled="importing" @click="pickFile">
         {{ importing ? '匯入中…' : '批次匯入' }}
       </button>
+      <button class="btn btn-outline-primary" :disabled="docImporting" @click="pickDocFile"
+              title="上傳 PDF/Word/Excel/CSV,由 AI 抽取訂單(內容會送往 Claude)">
+        {{ docImporting ? 'AI 解析中…' : '🤖 AI 文件匯入' }}
+      </button>
       <button class="btn btn-outline-info" :disabled="geocoding" @click="runGeocode">
         {{ geocoding ? '編碼中…' : '地理編碼待處理' }}
       </button>
@@ -283,6 +318,46 @@ async function adoptVehicle(orderId, vehicleId) {
       class="d-none"
       @change="onFileChosen"
     />
+    <input
+      ref="docFileInput"
+      type="file"
+      accept=".pdf,.docx,.xlsx,.xlsm,.xls,.csv,.txt,.md"
+      class="d-none"
+      @change="onDocFileChosen"
+    />
+  </div>
+
+  <!-- AI 文件匯入報告 -->
+  <div v-if="docImporting" class="alert alert-primary py-2">
+    🤖 AI 解析文件中…(抽取訂單需數秒~數十秒,請稍候)
+  </div>
+  <div v-if="docReport" class="alert" :class="docReport.error ? 'alert-danger' : 'alert-primary'">
+    <template v-if="docReport.error">AI 文件匯入失敗:{{ docReport.error }}</template>
+    <template v-else>
+      <strong>AI 文件匯入完成</strong>(檔案 {{ docReport.filename }}):
+      抽取 {{ docReport.extracted }} 筆,建立 <span class="text-success fw-bold">{{ docReport.created }}</span> 筆,
+      失敗 <span class="text-danger fw-bold">{{ docReport.failed }}</span> 筆;
+      自動編碼成功 {{ docReport.geocoded?.done }} 筆<span v-if="docReport.geocoded?.failed">、失敗 {{ docReport.geocoded.failed }} 筆</span>。
+      <div v-if="docReport.preview?.length" class="table-responsive mt-2">
+        <table class="table table-sm table-bordered bg-white mb-1">
+          <thead><tr><th>日期</th><th>時間</th><th>乘客</th><th>上車</th><th>下車</th><th>車種</th><th>人</th></tr></thead>
+          <tbody>
+            <tr v-for="(p, i) in docReport.preview" :key="i">
+              <td>{{ p.service_date }}</td><td>{{ p.pickup_time }}</td><td>{{ p.passenger_name }}</td>
+              <td class="small">{{ p.pickup_address }}</td><td class="small">{{ p.dropoff_address }}</td>
+              <td>{{ p.vehicle_type === 'welfare' ? '福祉' : '一般' }}</td><td>{{ p.pax }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <details v-if="docReport.errors?.length" class="small">
+        <summary class="text-danger">未抽取/失敗 {{ docReport.errors.length }} 筆(展開)</summary>
+        <ul class="mb-0">
+          <li v-for="(er, i) in docReport.errors" :key="i">{{ er.row }}:{{ er.error }}</li>
+        </ul>
+      </details>
+      <div class="small text-muted mt-1">⚠️ 文件內容(可能含個資)已送往 Claude 抽取;正式處理真實個資前請評估地端方案。</div>
+    </template>
   </div>
 
   <!-- 匯入進度條 -->
