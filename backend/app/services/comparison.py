@@ -27,8 +27,9 @@ TW = timezone(timedelta(hours=8))   # 台灣時區:上車時間以 +08 牆鐘換
 # --- 司機工時 / 共乘 營運規則 ---
 TRIP_SETUP = 1200          # 上車前 20 分(秒)
 TRIP_TEARDOWN = 1200       # 下車後 20 分(秒)→ 每趟前後共 40 分工時
-DAY_START = 6 * 3600       # 接送服務時段起 06:00
-DAY_END = 18 * 3600        # 接送服務時段迄 18:00
+DAY_START = 6 * 3600       # 接送服務時段起 06:00(最早可上車)
+DAY_END = 18 * 3600        # 接送服務時段迄 18:00(最晚可上車)
+COMPLETION_BUFFER = 2 * 3600   # 車輛可延後完成 18:00 前上車的趟次(營運至 20:00)
 MAX_WORK_SEC = 8 * 3600    # 每車每日工時上限 8h(VROOM 以行車+服務時間近似)
 EXCL_CAP = 100             # 「不共乘」維度容量;未同意共乘者佔滿 → 獨佔整車
 
@@ -107,20 +108,23 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
         kw = dict(id=v.id, profile="car",
                   capacity=[max(1, v.seats or 1), EXCL_CAP],
                   skills={1} if v.type == "welfare" else set(),
-                  time_window=vroom.TimeWindow(DAY_START, DAY_END),
+                  # 營運迄延後到 20:00,以完成 18:00 前上車的趟次(上車仍限 06–18)
+                  time_window=vroom.TimeWindow(DAY_START, DAY_END + COMPLETION_BUFFER),
                   max_travel_time=MAX_WORK_SEC)
         if v.id in veh_se:
             kw["start"], kw["end"] = veh_se[v.id]
         problem.add_vehicle(vroom.Vehicle(**kw))
     for o in orders:
-        p_idx, d_idx = ord_pts[o.id]
         s = _secs_tw(o.pickup_time)
+        if s < DAY_START or s > DAY_END:
+            continue   # 上車落在服務時段外 → 不納入(於未派明細標 out_of_hours)
+        p_idx, d_idx = ord_pts[o.id]
         welfare = o.vehicle_type == "welfare" or bool(o.need_wheelchair)
         # 共乘需同意:未同意者第二維度佔滿 EXCL_CAP → 與任何單都無法同車(獨佔)
         excl = 1 if o.allow_pool else EXCL_CAP
         problem.add_shipment(
             vroom.ShipmentStep(id=o.id, location=p_idx, default_service=TRIP_SETUP,
-                               time_windows=[vroom.TimeWindow(s, s + window_min * 60)]),
+                               time_windows=[vroom.TimeWindow(s, min(s + window_min * 60, DAY_END))]),
             vroom.ShipmentStep(id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=TRIP_TEARDOWN),
             amount=vroom.Amount([max(1, o.pax or 1), excl]),
             skills={1} if welfare else set(),
@@ -143,7 +147,7 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
         s = _secs_tw(o.pickup_time)
         need_welfare = o.vehicle_type == "welfare" or bool(o.need_wheelchair)
         p_idx, d_idx = ord_pts[o.id]
-        if s < DAY_START or s + window_min * 60 > DAY_END:
+        if s < DAY_START or s > DAY_END:
             code = "out_of_hours"
             detail = f"預約上車 {s // 3600:02d}:{(s % 3600) // 60:02d} 落在服務時段(06:00–18:00)之外"
         elif need_welfare and not has_welfare:

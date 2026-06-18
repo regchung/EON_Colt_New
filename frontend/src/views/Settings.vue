@@ -7,6 +7,9 @@ const loading = ref(false)
 const error = ref('')
 const toast = ref('')
 const savingKey = ref('')
+const original = ref({})   // key → 已儲存的值(判斷是否未儲存)
+
+function isDirty(it) { return String(it.value) !== original.value[it.key] }
 
 const blankNew = () => ({ key: '', value: '', value_type: 'str', group: '', label: '', description: '' })
 const showNew = ref(false)
@@ -23,6 +26,7 @@ async function load() {
   try {
     const { data } = await client.get('/settings')
     items.value = data
+    original.value = Object.fromEntries(data.map((x) => [x.key, String(x.value)]))
   } catch (e) {
     error.value = e.response?.data?.detail || '讀取失敗(需管理員權限)'
   } finally {
@@ -40,6 +44,7 @@ async function save(it) {
       value: String(it.value), value_type: it.value_type,
       group: it.group, label: it.label, description: it.description,
     })
+    original.value[it.key] = String(it.value)   // 更新已儲存基準 → 清除未儲存標示
     flash(`已儲存「${it.label || it.key}」`)
   } catch (e) {
     error.value = e.response?.data?.detail || '儲存失敗'
@@ -109,18 +114,21 @@ async function removeItem(it) {
       <table class="table table-sm align-middle mb-0">
         <thead><tr><th>參數</th><th style="width:160px">值</th><th style="width:90px">型別</th><th>說明</th><th style="width:130px"></th></tr></thead>
         <tbody>
-          <tr v-for="it in rows" :key="it.key">
+          <tr v-for="it in rows" :key="it.key" :class="{ 'table-warning': isDirty(it) }">
             <td><div class="fw-semibold">{{ it.label || it.key }}</div><code class="small text-muted">{{ it.key }}</code></td>
             <td>
               <select v-if="it.value_type === 'bool'" v-model="it.value" class="form-select form-select-sm">
                 <option value="true">是</option><option value="false">否</option>
               </select>
-              <input v-else v-model="it.value" :type="it.value_type === 'str' ? 'text' : 'number'" class="form-control form-control-sm" />
+              <input v-else v-model="it.value" :type="it.value_type === 'str' ? 'text' : 'number'"
+                     class="form-control form-control-sm" :class="{ 'border-warning': isDirty(it) }" />
+              <span v-if="isDirty(it)" class="badge bg-warning text-dark mt-1">● 未儲存,請按右側「儲存」</span>
             </td>
             <td><span class="badge bg-light text-dark">{{ it.value_type }}</span></td>
             <td class="small text-muted">{{ it.description }}</td>
             <td class="text-nowrap">
-              <button class="btn btn-sm btn-outline-primary me-1" :disabled="savingKey === it.key" @click="save(it)">
+              <button class="btn btn-sm me-1" :class="isDirty(it) ? 'btn-warning' : 'btn-outline-primary'"
+                      :disabled="savingKey === it.key" @click="save(it)">
                 <span v-if="savingKey === it.key" class="spinner-border spinner-border-sm"></span>
                 <span v-else>儲存</span>
               </button>

@@ -176,6 +176,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     # 4) 組 VROOM 問題(營運參數由系統設定提供,可由管理者於設定頁調整)
     prm = settings_svc.dispatch_params(db)
     day_start, day_end = prm["day_start_sec"], prm["day_end_sec"]
+    day_end_op = day_end + prm.get("completion_buffer_sec", 0)   # 車輛可延後完成的營運上限
     problem = vroom.Input()
     problem.set_durations_matrix("car", arr)
 
@@ -183,7 +184,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         # 班別時段來自當日班表(無則用服務時段),再與服務時段取交集
         rs, re = duty.get(v.id, (None, None))
         win_start = max(day_start, rs) if rs is not None else day_start
-        win_end = min(day_end, re) if re is not None else day_end
+        # 營運迄:可延後到 day_end_op 以完成 18:00 前上車的趟次;班別迄(re)若有設定則尊重
+        win_end = min(day_end_op, re) if re is not None else day_end_op
         skills = {1} if v.type == "welfare" else set()
         if v.id in lock_vehicles:
             skills.add(LOCK_SKILL_BASE + v.id)   # 鎖住其進行中行程的專屬技能
@@ -201,9 +203,15 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             kwargs["start"], kwargs["end"] = veh_se[v.id]
         problem.add_vehicle(vroom.Vehicle(**kwargs))
 
+    out_of_service = 0
     for o in orders:
         p_idx, d_idx = ord_pts[o.id]
         pw_start, pw_end = _pickup_window(o)
+        # 上車須落在服務時段 06:00–18:00;之外者不派(視為服務時段外)
+        if pw_start < day_start or pw_start > day_end:
+            out_of_service += 1
+            continue
+        pw_end = min(pw_end, day_end)   # 上車不得晚於 18:00
         # 共乘需同意(設定可關閉):需同意但未同意者第二維度佔滿 → 獨佔整車
         excl = EXCL_CAP if (prm["require_consent"] and not o.allow_pool) else 1
         pickup = vroom.ShipmentStep(
@@ -327,6 +335,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         "unassigned": unassigned,
         "ongoing_locked": len(ongoing),
         "fixed_pinned": len(fixed_pins),
+        "out_of_service": out_of_service,
         "skipped_no_coords": [o.id for o in skipped],
         "total_duration_sec": int(sol.summary.duration),
         "routes": routes_report,
