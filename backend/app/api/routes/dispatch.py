@@ -490,6 +490,14 @@ def unassigned_feedback_categories():
     return {"categories": _FEEDBACK_CATS, "reasons": _REASON_LABEL}
 
 
+@router.get("/unassigned/insights")
+def unassigned_insights(fleet: str | None = None, ai: bool = True,
+                        db: Session = Depends(get_db)):
+    """未派回饋學習建議:統計未派原因 × 行控回饋 → 改善行動(可選 Claude 白話診斷)。"""
+    from app.services import unassigned_insights as ui
+    return ui.insights(db, fleet, use_ai=ai)
+
+
 @router.get("/unassigned/dates")
 def unassigned_dates(fleet: str | None = None, db: Session = Depends(get_db)):
     """各日未派訂單數(供管理者點選日期),含已回饋數。"""

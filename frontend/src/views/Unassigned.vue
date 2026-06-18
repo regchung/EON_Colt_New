@@ -16,6 +16,19 @@ const toast = ref('')
 const fb = ref({ category: '', note: '' })
 const saving = ref(false)
 
+// 改善建議(#51 學習閉環)
+const insights = ref(null)
+const insLoading = ref(false)
+async function loadInsights(ai) {
+  insLoading.value = true
+  try {
+    const { data } = await client.get('/dispatch/unassigned/insights', {
+      params: { ai, ...(fleet.value ? { fleet: fleet.value } : {}) }, timeout: 90000,
+    })
+    insights.value = data
+  } catch (e) { error.value = e.response?.data?.detail || '產生建議失敗' } finally { insLoading.value = false }
+}
+
 function flash(m) { toast.value = m; setTimeout(() => { toast.value = '' }, 3000) }
 
 async function loadCats() {
@@ -86,6 +99,39 @@ onMounted(async () => { await loadCats(); await loadDates() })
     <span v-if="toast" class="badge bg-success ms-2">{{ toast }}</span>
   </div>
   <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>
+
+  <!-- 改善建議(學習閉環)-->
+  <div class="card shadow-sm mb-3 border-primary">
+    <div class="card-header bg-primary-subtle d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
+      <span>💡 改善建議(縮小人工 vs 自動差距)</span>
+      <span>
+        <button class="btn btn-sm btn-outline-primary me-1" :disabled="insLoading" @click="loadInsights(false)">統計建議</button>
+        <button class="btn btn-sm btn-primary" :disabled="insLoading" @click="loadInsights(true)">
+          <span v-if="insLoading" class="spinner-border spinner-border-sm me-1"></span>AI 診斷
+        </button>
+      </span>
+    </div>
+    <div v-if="insights" class="card-body">
+      <div class="small text-muted mb-2">未派總數 {{ insights.stats.total }}・行控已回饋 {{ insights.stats.feedback_filled }}{{ insights.fleet ? '・車行 ' + insights.fleet : '' }}</div>
+      <div class="row g-3">
+        <div class="col-12 col-md-5">
+          <div class="fw-semibold small mb-1">建議行動(依影響趟次)</div>
+          <ul class="small mb-2">
+            <li v-for="(r, i) in insights.recommendations" :key="i">
+              <b>{{ r.action }}</b>(約 {{ r.impact }} 趟)
+              <span v-if="r.from_feedback" class="badge bg-success">行控回饋</span>
+              <div class="text-muted">{{ r.rationale }}</div>
+            </li>
+            <li v-if="!insights.recommendations.length" class="text-muted">無未派或無可建議項目</li>
+          </ul>
+        </div>
+        <div class="col-12 col-md-7">
+          <div v-if="insights.ai_summary" class="border rounded p-2 bg-light small" style="white-space:pre-wrap; max-height:340px; overflow:auto">{{ insights.ai_summary }}</div>
+          <div v-else class="text-muted small">按「AI 診斷」產生白話改善方案(需 Claude 金鑰)。</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="row g-3">
     <!-- 左:日期清單 -->
