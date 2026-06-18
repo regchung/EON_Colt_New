@@ -41,6 +41,13 @@
 | 人工 vs 自動對比 | 逐(車行×日)以 OSRM+VROOM 重排,比人工用車/里程/可行性;前端對比頁 + PDF 報告(實務約束下集團 **↓18.4%** 車日,服務逾 95% 趟次) |
 | **對比進階** | **成本效益**(省下車日→NT$:實測 ↘536 車日≈134萬、年化≈298萬)+ **時間窗敏感度**(15/30/45/60 分省車率權衡) |
 | 時區一致 | 全鏈台灣 +08:寫入統一標 +08;DB 連線 `timezone=Asia/Taipei` → 讀回帶 +08,API/報表/路單/前端顯示一致 |
+| **車輛任務口卡** | 依車行→每車→時間排序的當日任務,可依日期/車行/車牌過濾、列印給司機(`/dispatch/daily-tasks`) |
+| **未派分析 + 行控回饋** | 系統無法排入的訂單依日歸類,顯示推斷原因 + 人工當時用哪台車;行控可填實際因素協助學習(`unassigned_record`) |
+| **未派回饋學習建議** | 聚合未派原因×回饋 → 規則式改善建議 + Claude 白話方案(放寬時段/上車窗、增福祉車、推共乘) |
+| **固定行程指定司機** | 規則(地點關鍵字/乘客姓名 + 早午晚時段)→ 派遣時以技能硬綁指定司機的車;CRUD + 某日比對預覽 |
+| **司機↔車對應** | 司機車輛對應、補無車司機、**當日輪車指派**(`driver_resolve`);供休假/固定行程/口卡共用 |
+| **自然語言出勤解析** | 貼「休3人:…」「某司機8-11不排」→ Claude 解析 → 自動產生班表例外(`/roster/parse-attendance`) |
+| **拖放派遣看板** | 各車欄位拖放訂單卡重新指派/卸載,時間衝突即時標紅(`/dispatch/board`) |
 | CI | GitHub Actions:後端 pytest(postgres)、前端 build、Docker 映像建置 |
 
 ---
@@ -218,6 +225,14 @@ SmartCar/
 | `GET/POST /settings` · `PUT/DELETE /settings/{key}` | 系統參數設定 CRUD(**限系統管理者**);即時派遣讀取營運參數 |
 | `GET /roster/availability?service_date=` · `GET/PUT /roster/patterns` · `/roster/exceptions` · `POST /roster/seed-from-history` · `POST /roster/apply-forecast?fleet=&dry_run=` | 班表:當日出勤查詢 / 週期班表(含班別時段)/ 例外 / 歷史回推 / **一鍵套用建議排車數** |
 | `GET /dispatch/demand-forecast?fleet=&horizon_days=&lookback_weeks=` | 輕量需求預測(weekday 基線):各日趟次 + 建議排車數 |
+| `GET /dispatch/daily-tasks?service_date=&fleet=&plate=` · `/daily-tasks/meta` | 車輛任務口卡(依車行→每車→時間) |
+| `GET /dispatch/unassigned/dates` · `/unassigned?service_date=` · `/unassigned/{id}` · `POST /unassigned/{id}/feedback` | 未派分析:依日清單 / 某日明細 / 單筆(原因+人工車)/ 行控回饋 |
+| `GET /dispatch/unassigned/insights?fleet=&ai=` | 未派回饋學習建議(規則 + Claude 白話方案) |
+| `GET /dispatch/board?service_date=` · `POST /orders/{id}/assign` · `/orders/{id}/unassign` | 派遣看板(各車趟次+衝突)/ 拖放指派 / 卸載 |
+| `… /fixed-routes`(CRUD)· `GET /fixed-routes/match?service_date=` | 固定行程指定司機(地點/姓名規則)/ 某日比對預覽 |
+| `GET /driver-vehicle` · `POST /driver-vehicle/{id}/assign` · `/create-driver` · `/daily` | 司機↔車對應 / 指派或建車 / 補司機 / 當日輪車 |
+| `POST /roster/parse-attendance` · `/roster/apply-attendance` | 自然語言出勤解析(貼文字→班表例外) |
+| `POST /orders/import-doc?service_date=` · `POST /dispatch/assistant` | AI 文件智慧匯入 / 調度員 AI 助理 |
 
 > 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`pool_suggest.project_and_store()` 跑共乘增益投影(寫 `pool_projection`);`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`(含「共乘增益」一節)。
 
