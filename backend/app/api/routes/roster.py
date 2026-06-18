@@ -11,6 +11,7 @@ from app.db.session import get_db
 from app.models.shift import ShiftException, ShiftPattern
 from app.models.user import User
 from app.models.vehicle import Vehicle
+from app.services import attendance_parse
 from app.services import roster as roster_svc
 
 router = APIRouter(prefix="/roster", tags=["roster"])
@@ -147,3 +148,52 @@ def apply_forecast(fleet: str, lookback_weeks: int = 12, dry_run: bool = False,
     dry_run=true 先預覽計畫(各 weekday 建議數/實派數/缺口);false 才寫入(覆寫該車行週期班表)。
     """
     return roster_svc.apply_forecast(db, fleet, lookback_weeks, dry_run)
+
+
+# ---- 自然語言出勤解析(主題2)----
+class AttendanceParseIn(BaseModel):
+    text: str
+    service_date: date
+
+
+@router.post("/parse-attendance")
+def parse_attendance(body: AttendanceParseIn, db: Session = Depends(get_db),
+                     _: User = Depends(require_dispatcher)):
+    """貼上出勤異動文字 → Claude 解析 → 預覽(對應車輛、是否可套用)。不寫入。"""
+    return attendance_parse.parse(db, body.text, body.service_date)
+
+
+class AttendanceItem(BaseModel):
+    vehicle_id: int
+    available: bool = False
+    shift_start: time | None = None
+    shift_end: time | None = None
+    reason: str | None = None
+
+
+class AttendanceApplyIn(BaseModel):
+    service_date: date
+    items: list[AttendanceItem]
+
+
+@router.post("/apply-attendance")
+def apply_attendance(body: AttendanceApplyIn, db: Session = Depends(get_db),
+                     _: User = Depends(require_dispatcher)):
+    """把解析後的出勤異動寫入班表例外(以車輛+日期 upsert)。"""
+    applied = 0
+    for it in body.items:
+        if not db.get(Vehicle, it.vehicle_id):
+            continue
+        row = db.scalar(select(ShiftException).where(
+            ShiftException.vehicle_id == it.vehicle_id,
+            ShiftException.ex_date == body.service_date))
+        if row is None:
+            row = ShiftException(vehicle_id=it.vehicle_id, ex_date=body.service_date)
+            db.add(row)
+        row.available = it.available
+        row.shift_start = it.shift_start
+        row.shift_end = it.shift_end
+        row.reason = it.reason
+        applied += 1
+    db.commit()
+    return {"applied": applied, "service_date": body.service_date.isoformat()}

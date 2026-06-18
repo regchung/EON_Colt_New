@@ -53,6 +53,34 @@ async function applyForecast() {
 
 function flash(m) { toast.value = m; setTimeout(() => { toast.value = '' }, 3000) }
 
+// 自然語言出勤解析(主題2)
+const attText = ref('')
+const attDate = ref(new Date().toISOString().slice(0, 10))
+const attPreview = ref(null)
+const attLoading = ref(false)
+async function parseAtt() {
+  if (!attText.value.trim()) { error.value = '請貼上出勤異動文字'; return }
+  attLoading.value = true; error.value = ''; attPreview.value = null
+  try {
+    const { data } = await client.post('/roster/parse-attendance',
+      { text: attText.value, service_date: attDate.value }, { timeout: 90000 })
+    attPreview.value = data
+  } catch (e) { error.value = e.response?.data?.detail || '解析失敗(需設定 Claude 金鑰)' } finally { attLoading.value = false }
+}
+async function applyAtt() {
+  const items = (attPreview.value?.items || []).filter((i) => i.applicable).map((i) => ({
+    vehicle_id: i.vehicle_id, available: i.available,
+    shift_start: i.shift_start, shift_end: i.shift_end, reason: i.reason || i.status,
+  }))
+  if (!items.length) { error.value = '無可套用項目'; return }
+  try {
+    const { data } = await client.post('/roster/apply-attendance', { service_date: attDate.value, items })
+    flash(`已套用 ${data.applied} 筆出勤異動到 ${attDate.value}`)
+    attPreview.value = null; attText.value = ''
+    await loadExceptions()
+  } catch (e) { error.value = e.response?.data?.detail || '套用失敗' }
+}
+
 async function loadPatterns() {
   loading.value = true; error.value = ''
   try {
@@ -116,6 +144,41 @@ async function seedFromHistory() {
 
   <div v-if="error" class="alert alert-danger">{{ error }}</div>
   <div v-if="toast" class="alert alert-success py-2">{{ toast }}</div>
+
+  <!-- 自然語言出勤異動 -->
+  <div class="card shadow-sm mb-3 border-success">
+    <div class="card-header bg-success-subtle py-2 fw-semibold">🗣️ 貼上出勤異動(自動解析)</div>
+    <div class="card-body">
+      <div class="d-flex flex-wrap align-items-end gap-2 mb-2">
+        <div><label class="form-label small mb-0">套用日期</label>
+          <input v-model="attDate" type="date" class="form-control form-control-sm" style="width:160px" /></div>
+        <button class="btn btn-sm btn-success" :disabled="attLoading" @click="parseAtt">
+          <span v-if="attLoading" class="spinner-border spinner-border-sm me-1"></span>解析
+        </button>
+        <span class="small text-muted">例:「休3人:朱正元、張啟明、温智祥」「梁銘漢8:00-11:00不排,11:00可接」</span>
+      </div>
+      <textarea v-model="attText" class="form-control form-control-sm mb-2" rows="3"
+                placeholder="直接貼上行控的出勤調整文字…"></textarea>
+      <div v-if="attPreview">
+        <div v-if="attPreview.errors?.length" class="alert alert-warning py-1 small mb-2">
+          <div v-for="(e, i) in attPreview.errors" :key="i">⚠️ {{ e }}</div>
+        </div>
+        <table v-if="attPreview.items?.length" class="table table-sm align-middle small mb-2">
+          <thead class="table-light"><tr><th>司機</th><th>異動</th><th>時段</th><th>對應車</th><th>套用</th></tr></thead>
+          <tbody>
+            <tr v-for="(it, i) in attPreview.items" :key="i">
+              <td>{{ it.driver }}</td>
+              <td><span class="badge" :class="it.available ? 'bg-info text-dark' : 'bg-secondary'">{{ it.status }}</span></td>
+              <td>{{ it.shift_start ? ('起 ' + it.shift_start) : '' }}{{ it.shift_end ? (' 迄 ' + it.shift_end) : '' }}<span v-if="!it.shift_start && !it.shift_end" class="text-muted">—</span></td>
+              <td><span :class="it.applicable ? 'badge bg-success' : 'badge bg-danger'">{{ it.plate || '無車' }}</span></td>
+              <td>{{ it.applicable ? '✓' : '✗' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <button class="btn btn-sm btn-primary" @click="applyAtt">套用到班表例外</button>
+      </div>
+    </div>
+  </div>
 
   <!-- 當日出勤查詢 -->
   <div class="card shadow-sm mb-3"><div class="card-body d-flex flex-wrap align-items-end gap-2">
