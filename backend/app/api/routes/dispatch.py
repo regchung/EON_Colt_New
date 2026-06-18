@@ -15,7 +15,7 @@ from app.models.pool_projection import PoolProjection
 from app.models.route import RouteStop
 from app.models.user import User
 from app.services import (
-    ai_dispatch, comparison, dispatcher, driver_affinity, forecast, matrix, osrm,
+    ai_dispatch, assistant, comparison, dispatcher, driver_affinity, forecast, matrix, osrm,
     pool_suggest, recurring_pairs, zone_affinity,
 )
 from app.services import settings as app_settings
@@ -139,6 +139,24 @@ def pool_consent(
         o.pool_consent_by = current.username if body.consent else None
     db.commit()
     return {"updated": len(orders), "consent": body.consent, "by": current.username}
+
+
+class AssistantMessage(BaseModel):
+    role: str   # "user" | "assistant"
+    content: str
+
+
+class AssistantIn(BaseModel):
+    messages: list[AssistantMessage]
+
+
+@router.post("/assistant")
+def dispatch_assistant(body: AssistantIn, db: Session = Depends(get_db)):
+    """調度員 AI 助理(對話 + Claude tool-use,唯讀查詢真實資料後給建議)。"""
+    msgs = [{"role": m.role, "content": m.content} for m in body.messages]
+    if not msgs or msgs[-1]["role"] != "user":
+        raise HTTPException(status_code=400, detail="最後一則訊息需為使用者發言")
+    return assistant.chat(db, msgs)
 
 
 @router.post("/ai-analyze")

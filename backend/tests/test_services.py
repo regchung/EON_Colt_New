@@ -171,3 +171,34 @@ def test_doc_ingest_coerce_default_date():
     from app.services import doc_ingest
     o = doc_ingest._coerce({"pickup_address": "A", "dropoff_address": "B"}, "2026-07-01")
     assert o["service_date"] == "2026-07-01"
+
+
+# ---------- assistant(調度員 AI 助理) ----------
+def test_assistant_tools_schema_integrity():
+    from app.services import assistant
+    names = [t["name"] for t in assistant.TOOLS]
+    assert len(names) == len(set(names)), "工具名稱需唯一"
+    # 每個工具都要有對應執行器,反之亦然
+    assert set(names) == set(assistant._EXECUTORS)
+    for t in assistant.TOOLS:
+        assert t["description"] and t["input_schema"]["type"] == "object"
+
+
+def test_assistant_chat_no_key_graceful():
+    from app.services import assistant
+    db = SessionLocal()
+    try:
+        r = assistant.chat(db, [{"role": "user", "content": "今天幾單?"}])
+        assert "ANTHROPIC_API_KEY" in r["reply"]
+        assert r["tool_trace"] == []
+    finally:
+        db.close()
+
+
+def test_assistant_run_tool_unknown():
+    from app.services import assistant
+    db = SessionLocal()
+    try:
+        assert "error" in assistant._run_tool(db, "no_such_tool", {})
+    finally:
+        db.close()

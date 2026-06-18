@@ -37,6 +37,7 @@ const allNav = [
   { to: '/reports', label: '報表', icon: '📈', roles: ['admin', 'dispatcher'] },
   { to: '/comparison', label: '人工 vs 自動', icon: '🆚', roles: ['admin', 'dispatcher'] },
   { to: '/pool-suggest', label: '共乘建議', icon: '🤝', roles: ['admin', 'dispatcher'] },
+  { to: '/assistant', label: 'AI 助理', icon: '💬', roles: ['admin', 'dispatcher'] },
   { to: '/users', label: '使用者管理', icon: '👥', roles: ['admin'] },
   { to: '/settings', label: '參數設定', icon: '⚙️', roles: ['admin'] },
 ]

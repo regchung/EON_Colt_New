@@ -87,3 +87,25 @@ def test_assign_order_lifecycle():
             client.delete(f"/api/orders/{oid}", headers=h)
         if vid is not None:
             client.delete(f"/api/vehicles/{vid}", headers=h)
+
+
+# ---------- AI 助理端點 ----------
+def test_assistant_requires_auth():
+    r = client.post("/api/dispatch/assistant", json={"messages": [{"role": "user", "content": "hi"}]})
+    assert r.status_code == 401
+
+
+def test_assistant_rejects_non_user_last():
+    r = client.post("/api/dispatch/assistant",
+                    json={"messages": [{"role": "assistant", "content": "hi"}]},
+                    headers=_admin_headers())
+    assert r.status_code == 400
+
+
+def test_assistant_no_key_returns_notice():
+    # 無金鑰時應優雅回覆(200 + 提示),非錯誤
+    r = client.post("/api/dispatch/assistant",
+                    json={"messages": [{"role": "user", "content": "今天有幾單?"}]},
+                    headers=_admin_headers())
+    assert r.status_code == 200
+    assert "reply" in r.json() and "tool_trace" in r.json()

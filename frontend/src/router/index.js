@@ -12,6 +12,7 @@ import PoolSuggest from '../views/PoolSuggest.vue'
 import Users from '../views/Users.vue'
 import Settings from '../views/Settings.vue'
 import Roster from '../views/Roster.vue'
+import Assistant from '../views/Assistant.vue'
 import Login from '../views/Login.vue'
 import DriverRoute from '../views/DriverRoute.vue'
 
@@ -26,6 +27,7 @@ const routes = [
   { path: '/reports', name: 'reports', component: Reports, meta: { title: '報表' } },
   { path: '/comparison', name: 'comparison', component: Comparison, meta: { title: '人工 vs 自動' } },
   { path: '/pool-suggest', name: 'pool-suggest', component: PoolSuggest, meta: { title: '共乘建議' } },
+  { path: '/assistant', name: 'assistant', component: Assistant, meta: { title: 'AI 助理', roles: ['admin', 'dispatcher'] } },
   { path: '/users', name: 'users', component: Users, meta: { title: '使用者管理', roles: ['admin'] } },
   { path: '/settings', name: 'settings', component: Settings, meta: { title: '參數設定', roles: ['admin'] } },
   { path: '/driver-route', name: 'driver-route', component: DriverRoute, meta: { title: '我的路單', roles: ['driver'] } },
