@@ -1,4 +1,6 @@
-"""司機↔車輛 管理(地基):檢視對應、為司機指派既有車或建新車。需派遣員以上。"""
+"""司機↔車輛 管理(地基):檢視對應、為司機指派既有車或建新車、當日輪車指派。需派遣員以上。"""
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -7,6 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.deps import require_dispatcher
 from app.db.session import get_db
 from app.models.driver import Driver
+from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services import driver_resolve
@@ -102,3 +105,61 @@ def unassign_vehicle(driver_id: int, db: Session = Depends(get_db),
     d.vehicle_id = None
     db.commit()
     return {"driver_id": d.id, "vehicle_id": None}
+
+
+# ---- 當日輪車指派(主題1B)----
+@router.get("/daily")
+def list_daily(service_date: date, db: Session = Depends(get_db),
+               _: User = Depends(require_dispatcher)):
+    """某日的駕駛-車輛指派(輪車覆寫);未指派者沿用預設車。"""
+    rows = list(db.scalars(select(DriverVehicleAssignment).where(
+        DriverVehicleAssignment.service_date == service_date)).all())
+    dmap = {d.id: d for d in db.scalars(select(Driver)).all()}
+    vmap = {v.id: v for v in db.scalars(select(Vehicle)).all()}
+    return {"service_date": service_date.isoformat(), "count": len(rows), "items": [
+        {"id": a.id, "driver_id": a.driver_id,
+         "driver_name": dmap[a.driver_id].name if a.driver_id in dmap else None,
+         "vehicle_id": a.vehicle_id, "plate": vmap[a.vehicle_id].plate if a.vehicle_id in vmap else None,
+         "note": a.note}
+        for a in rows]}
+
+
+class DailyAssignIn(BaseModel):
+    service_date: date
+    driver_id: int
+    plate: str
+    note: str | None = None
+
+
+@router.post("/daily")
+def upsert_daily(body: DailyAssignIn, db: Session = Depends(get_db),
+                 _: User = Depends(require_dispatcher)):
+    """設定某日某司機開哪台(以既有車牌);同(日,司機)覆寫。"""
+    d = db.get(Driver, body.driver_id)
+    if d is None:
+        raise HTTPException(status_code=404, detail="司機不存在")
+    v = db.scalar(select(Vehicle).where(Vehicle.plate == body.plate.strip()))
+    if v is None:
+        raise HTTPException(status_code=404, detail="車牌不存在,請先於「司機車輛」建立")
+    a = db.scalar(select(DriverVehicleAssignment).where(
+        DriverVehicleAssignment.service_date == body.service_date,
+        DriverVehicleAssignment.driver_id == body.driver_id))
+    if a is None:
+        a = DriverVehicleAssignment(service_date=body.service_date, driver_id=body.driver_id)
+        db.add(a)
+    a.vehicle_id = v.id
+    a.note = body.note
+    db.commit()
+    return {"id": a.id, "driver_id": a.driver_id, "plate": v.plate,
+            "service_date": body.service_date.isoformat()}
+
+
+@router.delete("/daily/{assign_id}")
+def delete_daily(assign_id: int, db: Session = Depends(get_db),
+                 _: User = Depends(require_dispatcher)):
+    a = db.get(DriverVehicleAssignment, assign_id)
+    if a is None:
+        raise HTTPException(status_code=404, detail="指派不存在")
+    db.delete(a)
+    db.commit()
+    return {"deleted": assign_id}

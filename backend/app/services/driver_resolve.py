@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.driver import Driver
+from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.fixed_route import FixedRoute
 from app.models.vehicle import Vehicle
 
@@ -27,7 +28,14 @@ def resolve(db: Session, driver_name: str, service_date: date | None = None) -> 
     d = db.scalar(select(Driver).where(Driver.name == driver_name.strip()))
     if d is None:
         return None
-    # 1B 將在此優先查 driver_vehicle_assignment(service_date)
+    # 1) 當日輪車指派優先
+    if service_date is not None:
+        a = db.scalar(select(DriverVehicleAssignment).where(
+            DriverVehicleAssignment.service_date == service_date,
+            DriverVehicleAssignment.driver_id == d.id))
+        if a and a.vehicle_id:
+            return db.get(Vehicle, a.vehicle_id)
+    # 2) 預設車
     if d.vehicle_id:
         return db.get(Vehicle, d.vehicle_id)
     return None

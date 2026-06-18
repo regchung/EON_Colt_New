@@ -14,6 +14,11 @@ const edit = ref({})   // driver_id -> {plate, seats, type}
 // 新增司機(補固定行程缺檔)
 const nf = ref({ name: '', home_fleet: '', plate: '', seats: 4, type: 'normal' })
 
+// 當日輪車指派(主題1B)
+const dailyDate = ref(new Date().toISOString().slice(0, 10))
+const dailyList = ref([])
+const df = ref({ driver_id: '', plate: '', note: '' })
+
 function flash(m) { toast.value = m; setTimeout(() => { toast.value = '' }, 3000) }
 
 async function load() {
@@ -24,7 +29,7 @@ async function load() {
   data.value = d
   edit.value = {}
 }
-onMounted(load)
+onMounted(async () => { await load(); await loadDaily() })
 
 const filtered = computed(() => {
   const s = search.value.trim()
@@ -62,6 +67,23 @@ async function createDriver() {
     await load()
   } catch (err) { error.value = err.response?.data?.detail || '建立失敗' }
 }
+
+async function loadDaily() {
+  const { data: d } = await client.get('/driver-vehicle/daily', { params: { service_date: dailyDate.value } })
+  dailyList.value = d.items
+}
+async function addDaily() {
+  if (!df.value.driver_id || !df.value.plate.trim()) { error.value = '請選司機並輸入車牌'; return }
+  error.value = ''
+  try {
+    await client.post('/driver-vehicle/daily', {
+      service_date: dailyDate.value, driver_id: df.value.driver_id,
+      plate: df.value.plate.trim(), note: df.value.note || null,
+    })
+    flash('已設定當日輪車'); df.value = { driver_id: '', plate: '', note: '' }; await loadDaily()
+  } catch (err) { error.value = err.response?.data?.detail || '設定失敗' }
+}
+async function delDaily(id) { await client.delete(`/driver-vehicle/daily/${id}`); await loadDaily() }
 </script>
 
 <template>
@@ -95,6 +117,38 @@ async function createDriver() {
           <option value="normal">一般車</option><option value="welfare">福祉車</option></select></div>
       <div class="col-4 col-md-2"><button class="btn btn-sm btn-primary w-100" @click="createDriver">新增司機</button></div>
     </div>
+  </div></div>
+
+  <!-- 當日輪車指派 -->
+  <div class="card shadow-sm mb-3 border-info"><div class="card-body">
+    <div class="d-flex flex-wrap align-items-end gap-2 mb-2">
+      <span class="fw-semibold me-2">🔄 當日輪車指派</span>
+      <input v-model="dailyDate" type="date" class="form-control form-control-sm" style="width:160px" @change="loadDaily" />
+      <span class="small text-muted">(某司機當天改開哪台;優先於預設車,供派遣/口卡使用)</span>
+    </div>
+    <div class="row g-2 align-items-end mb-2">
+      <div class="col-6 col-md-3"><label class="form-label small mb-0">司機</label>
+        <select v-model.number="df.driver_id" class="form-select form-select-sm">
+          <option value="">選司機</option>
+          <option v-for="d in data.drivers" :key="d.driver_id" :value="d.driver_id">{{ d.name }}</option>
+        </select></div>
+      <div class="col-6 col-md-2"><label class="form-label small mb-0">改開車牌</label>
+        <input v-model="df.plate" class="form-control form-control-sm" placeholder="RXX-0000" /></div>
+      <div class="col-8 col-md-4"><label class="form-label small mb-0">備註</label>
+        <input v-model="df.note" class="form-control form-control-sm" /></div>
+      <div class="col-4 col-md-2"><button class="btn btn-sm btn-info text-dark w-100" @click="addDaily">設定</button></div>
+    </div>
+    <table v-if="dailyList.length" class="table table-sm mb-0 align-middle small">
+      <thead class="table-light"><tr><th>司機</th><th>改開</th><th>備註</th><th></th></tr></thead>
+      <tbody>
+        <tr v-for="a in dailyList" :key="a.id">
+          <td>{{ a.driver_name }}</td><td><span class="badge bg-info text-dark">{{ a.plate }}</span></td>
+          <td class="text-muted">{{ a.note }}</td>
+          <td><button class="btn btn-sm btn-outline-danger" @click="delDaily(a.id)">刪</button></td>
+        </tr>
+      </tbody>
+    </table>
+    <div v-else class="small text-muted">該日無輪車指派(各司機沿用預設車)。</div>
   </div></div>
 
   <!-- 過濾 -->
