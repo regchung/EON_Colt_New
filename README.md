@@ -21,21 +21,26 @@
 | 地址簿 | 一個門牌(校正後地址+座標)對應多種原始描述;查無也快取 |
 | 自動排班 | VROOM:福祉車(skills)、共乘(capacity)、預約(time window)、班別 |
 | 行車時間矩陣 | 自架 OSRM `/table`(台灣 OSM 圖資,$0) |
-| 動態重排 | 取消 / 開始 / 完成;重排時鎖定進行中與已完成訂單 |
+| 動態重排 | 取消 / 開始 / 完成;**進行中(ongoing)訂單以唯一技能硬鎖原車**(delivery-only Job,不重排上車) |
 | **區域親和建議** | 同區新單優先推薦今天已在該區的司機(達 N 觸發),護欄=車種/座位/上限;建議→採用(人在迴路) |
 | 路線地圖 | Map8 圖磚 + OSRM 實際道路路線,每車一色 + 上下車站點 |
 | 司機 App | 司機登入看「我的路單」(綁定車輛,讀 route_stop) |
 | AI 派遣 | Claude 排班分析 / 插單建議(需 `ANTHROPIC_API_KEY`) |
+| **AI 文件智慧匯入** | 上傳 PDF/Word/Excel/CSV → Claude 抽取結構化訂單 → 建單 + 自動地理編碼(`/orders/import-doc`;⚠️文件原文送 Claude,合規見 Roadmap) |
+| **調度員 AI 助理** | 對話式 + Claude tool-use(查單/出勤/統計/需求預測 4 唯讀工具),以真實資料為依據給建議(`/dispatch/assistant`,前端「💬 AI 助理」) |
 | 使用者管理 | 新增 / 刪除帳號、重設密碼、指定角色與綁車(防刪最後一人) |
-| 報表 | 區間營運彙總 + **CSV 匯出**:狀態/車種分佈、每日量、派遣率、各車派遣量 |
+| 報表 | 區間營運彙總 + **CSV 匯出** + **區間趨勢圖**(零依賴 SVG 折線:總數/已派/未派、派遣率):狀態/車種分佈、每日量、派遣率、各車派遣量 |
 | 歷史匯入 | 長照平台匯出檔 → 訂單 + **人工派遣結果**(`dispatch_history`)+ 自建車/司機 + 灌地址簿(去識別化) |
 | 車行標記 | 集團統一派遣:`fleet` 標記每筆訂單;車輛共用車池 + `home_fleet` |
 | 車隊名冊匯入 | 司機/車輛主檔 → 回填真實可載客數、福祉能力、**出車起點/收車終點**(`fleet_import`) |
 | 起訖點錨定 | 車輛 `start`/`end` 座標;VROOM 令每車首站自起點出發、末站返回終點 |
 | 司機營運規則 | 前後 40 分/趟、8h 工時上限、06:00–18:00 服務時段、共乘需同意;上車時間 +08 時區換算 |
 | 系統參數設定 | `app_settings` key-value;管理者於「參數設定」頁 CRUD 派遣/共乘營運參數,即時派遣即時採用 |
-| 班表(出勤) | 週期班表 + 單日例外(請假/維修/加班);即時派遣只用當日出勤車(無資料保守視為不出勤);可從歷史回推 |
+| 班表(出勤) | 週期班表 + **每車班別時段(起/迄)** + 單日例外(請假/維修/加班);即時派遣只用當日出勤車並以班別時段為 time_window;可從歷史回推 |
+| 需求預測 | weekday 季節基線 → 各日趟次/建議排車數;班表頁可**一鍵套用建議排車數**(挑該車行歷史最常出勤前 N 台覆寫週期班表) |
 | 人工 vs 自動對比 | 逐(車行×日)以 OSRM+VROOM 重排,比人工用車/里程/可行性;前端對比頁 + PDF 報告(實務約束下集團 **↓18.4%** 車日,服務逾 95% 趟次) |
+| **對比進階** | **成本效益**(省下車日→NT$:實測 ↘536 車日≈134萬、年化≈298萬)+ **時間窗敏感度**(15/30/45/60 分省車率權衡) |
+| 時區一致 | 全鏈台灣 +08:寫入統一標 +08;DB 連線 `timezone=Asia/Taipei` → 讀回帶 +08,API/報表/路單/前端顯示一致 |
 | CI | GitHub Actions:後端 pytest(postgres)、前端 build、Docker 映像建置 |
 
 ---
@@ -154,7 +159,7 @@ SmartCar/
 │   │   ├── crud/             # 泛型 CRUD
 │   │   ├── api/routes/       # auth/orders/vehicles/drivers/dispatch/addresses/config/health
 │   │   └── services/         # geocode / map8 / osrm / matrix / dispatcher / importer
-│   ├── alembic/versions/     # 0001…0006 migration
+│   ├── alembic/versions/     # 0001…0016 migration
 │   └── sample_orders.csv     # 匯入範例
 ├── frontend/                 # Vue3 + Vite + Bootstrap5
 │   └── src/{views,stores,components,router,api}
@@ -187,6 +192,7 @@ SmartCar/
 | `POST /auth/login` · `GET /auth/me` | 登入 / 取得自己 |
 | `… /orders`(CRUD) | 訂單;`?service_date=&status=&vehicle_type=` 篩選 |
 | `GET /orders/import/template` · `POST /orders/import` | 範本 / 批次匯入(自動編碼) |
+| `POST /orders/import-doc?service_date=` | **AI 文件智慧匯入**:PDF/Word/Excel/CSV → Claude 抽單 → 建單+編碼 |
 | `POST /orders/{id}/geocode` · `POST /orders/geocode-pending` | 地理編碼 |
 | `POST /orders/{id}/cancel` · `POST /orders/{id}/status?value=` | 取消 / 改狀態 |
 | `POST /orders/{id}/assign?vehicle_id=` | 手動指派車輛(採用建議) |
@@ -194,6 +200,7 @@ SmartCar/
 | `POST /dispatch/run?service_date=&ai=` | 一鍵排班(ai=true 附 Claude 摘要) |
 | `POST /dispatch/zone-suggest?order_id=&service_date=` | **區域親和建議**(dry-run) |
 | `POST /dispatch/ai-analyze` · `POST /dispatch/ai-insert` | AI 排班分析 / 插單建議 |
+| `POST /dispatch/assistant` | **調度員 AI 助理**:對話 + Claude tool-use(唯讀查單/出勤/統計/預測)給建議 |
 | `GET /dispatch/routes-geojson?service_date=` | 路線 GeoJSON |
 | `GET /dispatch/matrix?service_date=` · `GET /dispatch/osrm-health` | 矩陣預覽 / OSRM 探活 |
 | `GET /addresses` | 地址簿 |
@@ -202,13 +209,14 @@ SmartCar/
 | `POST /history/import` · `GET /history/stats` | 長照派遣歷史匯入 / 統計 |
 | `POST /fleet/import` | 車隊名冊匯入(回填座位/福祉/出車起點·收車終點) |
 | `GET /dispatch/comparison/summary` · `GET /dispatch/comparison?fleet=` | 人工 vs 自動對比(總覽 / 逐日) |
+| `GET /dispatch/comparison/savings` · `GET /dispatch/comparison/sensitivity?windows=` | **對比進階**:省下車日→NT$(實測/年化)/ 時間窗敏感度 |
 | `GET /dispatch/pool-suggest?service_date=&fleet=` | 共乘推薦:雙跑 VROOM 找值得徵詢同意的組 + 可省車數 |
 | `POST /dispatch/pool-consent` | 登錄共乘同意/撤回(留痕 by/at);同意後排班自動納入共乘 |
 | `GET /dispatch/pool-recurring?min_days=3` | 常態共乘對:反覆同時間/同起訖點同行的乘客對,適合徵長期同意 |
 | `GET /dispatch/pool-gain` | 共乘增益總覽(讀 `pool_projection`):現況→共乘後車日 + 額外省幅,供對比頁/報表 |
 | `GET /dispatch/driver-suggest?passenger=` · `GET /dispatch/driver-loyalty` | 常客固定駕駛:乘客→慣用駕駛建議 / 高忠誠乘客清單(軟性偏好) |
 | `GET/POST /settings` · `PUT/DELETE /settings/{key}` | 系統參數設定 CRUD(**限系統管理者**);即時派遣讀取營運參數 |
-| `GET /roster/availability?service_date=` · `GET/PUT /roster/patterns` · `/roster/exceptions` · `POST /roster/seed-from-history` | 班表:當日出勤查詢 / 週期班表 / 例外 / 歷史回推 |
+| `GET /roster/availability?service_date=` · `GET/PUT /roster/patterns` · `/roster/exceptions` · `POST /roster/seed-from-history` · `POST /roster/apply-forecast?fleet=&dry_run=` | 班表:當日出勤查詢 / 週期班表(含班別時段)/ 例外 / 歷史回推 / **一鍵套用建議排車數** |
 | `GET /dispatch/demand-forecast?fleet=&horizon_days=&lookback_weeks=` | 輕量需求預測(weekday 基線):各日趟次 + 建議排車數 |
 
 > 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`pool_suggest.project_and_store()` 跑共乘增益投影(寫 `pool_projection`);`python3 scripts/make_report.py` 產生 `SmartCar_對比報告.pdf`(含「共乘增益」一節)。
@@ -221,7 +229,11 @@ SmartCar/
 docker compose exec backend python -m pytest -q
 # CI 會以全新 postgres service 跑:alembic upgrade head → pytest
 ```
-測試位於 `backend/tests/`(匯入解析器單元測試 + API 整合測試)。
+測試位於 `backend/tests/`:`test_importer`/`test_services`(純函式:settings/roster/comparison 時區/
+zone_affinity/doc_ingest/assistant/訂單時區驗證器)+ `test_api`/`test_endpoints`(授權、apply-forecast、
+手動指派、AI 助理端點)。共 **50 passed**(本機已設金鑰時 no-key 降級測試自動 skip)。
+> pytest 在 `requirements-dev.txt`(CI 已裝);本機執行容器需先 `pip install -r requirements-dev.txt`。
+> `pool_suggest`/`comparison`/`dispatcher` 的 VROOM 求解測試待 CI 內備 OSRM 矩陣後補。
 CI 設定見 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
 ---
