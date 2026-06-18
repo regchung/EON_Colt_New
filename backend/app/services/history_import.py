@@ -70,21 +70,61 @@ def _read_rows(filename: str, content: bytes) -> list[dict]:
     return df.to_dict(orient="records")
 
 
-def _upsert_address(db: Session, addr: str | None, lng, lat, city, town):
-    """把檔案提供的真實座標灌進地址簿(alias→point),日後同址免再 geocode。"""
-    if not addr or lng is None or lat is None:
+def _upsert_address(db: Session, addr: str | None, lng, lat, city, town,
+                    descs=(), stats=None):
+    """把檔案提供的真實座標灌進地址簿,並把『描述名稱』(乘客地址補充/醫療設施名稱)
+    當別名歸到同一門牌。
+
+    規則(對應「沒有就新增、已存在但描述不同就更新」):
+    - 標準門牌(addr):有座標→新建門牌或 refresh 既有(座標/縣市/鄉鎮);其字串本身存為別名。
+    - 描述名稱(descs):新增缺少的別名→指向該門牌;若既有別名指向不同/空門牌→更新為此門牌。
+    - 無座標且門牌不存在者:略過(不寫 NULL 別名,以免毒化 geocode 快取)。
+    """
+    def bump(k):
+        if stats is not None:
+            stats[k] = stats.get(k, 0) + 1
+
+    if not addr:
         return
     addr = addr.strip()
     point = db.scalar(select(AddressPoint).where(AddressPoint.standardized_address == addr))
     if point is None:
+        if lng is None or lat is None:
+            return  # 無座標又無既有門牌 → 無法建立(門牌必須有座標)
         point = AddressPoint(
             standardized_address=addr, lng=lng, lat=lat,
             precision="history", city=city, town=town, source="history",
         )
         db.add(point)
         db.flush()
-    if db.get(AddressAlias, addr) is None:
-        db.add(AddressAlias(raw_address=addr, address_point_id=point.id))
+        bump("points_created")
+    else:
+        # 已存在:以檔案最新資訊 refresh(座標/縣市/鄉鎮)
+        changed = False
+        if lng is not None and lat is not None and (point.lng != lng or point.lat != lat):
+            point.lng, point.lat = lng, lat
+            changed = True
+        if city and point.city != city:
+            point.city = city
+            changed = True
+        if town and point.town != town:
+            point.town = town
+            changed = True
+        if changed:
+            bump("points_updated")
+
+    # 標準門牌字串本身 + 各描述名稱,皆作為別名歸到此門牌
+    for raw in (addr, *descs):
+        raw = (raw or "").strip()
+        if not raw:
+            continue
+        alias = db.get(AddressAlias, raw)
+        if alias is None:
+            db.add(AddressAlias(raw_address=raw, address_point_id=point.id))
+            bump("aliases_created")
+        elif alias.address_point_id != point.id:
+            alias.address_point_id = point.id   # 描述指向不同/空門牌 → 更新
+            bump("aliases_updated")
 
 
 def import_history(db: Session, content: bytes, filename: str) -> dict:
@@ -94,6 +134,7 @@ def import_history(db: Session, content: bytes, filename: str) -> dict:
         "history_created": 0, "vehicles_created": 0, "drivers_created": 0,
         "errors": [],
     }
+    addr_stats: dict[str, int] = {}   # 地址簿:points_created/updated、aliases_created/updated
 
     veh_cache: dict[str, Vehicle] = {}
     drv_cache: dict[str, Driver] = {}
@@ -152,8 +193,11 @@ def import_history(db: Session, content: bytes, filename: str) -> dict:
                 drv_cache[driver_name] = drv
 
             # --- 灌地址簿(真實座標) ---
-            _upsert_address(db, pickup_addr, p_lng, p_lat, p_city, p_town)
-            _upsert_address(db, dropoff_addr, d_lng, d_lat, d_city, d_town)
+            # 描述名稱:乘客地址補充 / 醫療設施名稱(歸到同一門牌的別名)
+            p_descs = (_s(r.get("[上車]乘客地址補充")), _s(r.get("[上車]醫療設施名稱")))
+            d_descs = (_s(r.get("[下車]乘客地址補充")), _s(r.get("[下車]醫療設施名稱")))
+            _upsert_address(db, pickup_addr, p_lng, p_lat, p_city, p_town, p_descs, addr_stats)
+            _upsert_address(db, dropoff_addr, d_lng, d_lat, d_city, d_town, d_descs, addr_stats)
 
             # --- upsert 訂單(by source_order_no) ---
             order = db.scalar(select(Order).where(Order.source_order_no == son))
@@ -205,4 +249,5 @@ def import_history(db: Session, content: bytes, filename: str) -> dict:
             report["errors"].append({"row": idx + 2, "error": str(e)})
 
     db.commit()
+    report["address_book"] = addr_stats
     return report

@@ -10,6 +10,7 @@ from app.api.deps import get_current_user
 from app.core.config import settings
 from app.db.session import get_db
 from app.models.dispatch_comparison import DispatchComparison
+from app.models.dispatch_history import DispatchHistory
 from app.models.order import Order
 from app.models.pool_projection import PoolProjection
 from app.models.route import RouteStop
@@ -464,4 +465,92 @@ def matrix_preview(service_date: date, db: Session = Depends(get_db)):
             "duration_sec": durations[0][1] if len(durations) > 1 else 0,
             "distance_m": (result.get("distances") or [[None, None]])[0][1],
         },
+    }
+
+
+_DT_SERVED = "已轉至正式單"
+
+
+@router.get("/daily-tasks/meta")
+def daily_tasks_meta(db: Session = Depends(get_db)):
+    """口卡查詢的過濾選項:資料日期範圍 + 車行清單(供前端預設日期與下拉)。"""
+    mn, mx = db.execute(
+        select(func.min(DispatchHistory.service_date), func.max(DispatchHistory.service_date))
+        .where(DispatchHistory.status == _DT_SERVED)
+    ).one()
+    fleets = [f for (f,) in db.execute(
+        select(DispatchHistory.fleet.distinct())
+        .where(DispatchHistory.fleet.is_not(None)).order_by(DispatchHistory.fleet)
+    ).all()]
+    return {"min_date": mn.isoformat() if mn else None,
+            "max_date": mx.isoformat() if mx else None, "fleets": fleets}
+
+
+@router.get("/daily-tasks")
+def daily_tasks(service_date: date, fleet: str | None = None, plate: str | None = None,
+                db: Session = Depends(get_db)):
+    """每日車輛任務清單(口卡):依車行 → 每台車 → 依上車時間排序的任務。
+
+    資料源為人工派遣紀錄(dispatch_history,僅成行);乘客姓名/電話由 source_order_no 關聯訂單。
+    可依日期(必填)、車行、車牌過濾。
+    """
+    q = (
+        select(DispatchHistory)
+        .where(DispatchHistory.service_date == service_date,
+               DispatchHistory.status == _DT_SERVED,
+               DispatchHistory.plate.like("R%"))
+    )
+    if fleet:
+        q = q.where(DispatchHistory.fleet == fleet)
+    if plate:
+        q = q.where(DispatchHistory.plate == plate)
+    rows = list(db.scalars(q.order_by(DispatchHistory.plate, DispatchHistory.pickup_time)).all())
+
+    # 乘客資訊(姓名/電話/時間窗)由訂單關聯
+    nos = [r.source_order_no for r in rows if r.source_order_no]
+    omap = {}
+    if nos:
+        omap = {o.source_order_no: o for o in db.scalars(
+            select(Order).where(Order.source_order_no.in_(nos))).all()}
+
+    def _task(r):
+        o = omap.get(r.source_order_no)
+        wc = r.wheelchair_count or 0
+        welfare = wc > 0 or (bool(r.vehicle_type_req) and "小型" not in (r.vehicle_type_req or ""))
+        return {
+            "time": r.pickup_time.strftime("%H:%M") if r.pickup_time else "--:--",
+            "passenger": (o.passenger_name if o else None),
+            "phone": (o.passenger_phone if o else None),
+            "pickup": r.pickup_address, "dropoff": r.dropoff_address,
+            "pickup_town": r.pickup_town, "dropoff_town": r.dropoff_town,
+            "pax": r.pax or 1, "wheelchair": wc, "welfare": welfare,
+            "est_min": round(r.est_minutes) if r.est_minutes else None,
+            "order_no": r.source_order_no,
+        }
+
+    # 分組:車行 → 車牌
+    grouped: dict[str, dict[str, dict]] = {}
+    for r in rows:
+        veh = grouped.setdefault(r.fleet or "(未標車行)", {}).setdefault(
+            r.plate, {"plate": r.plate, "driver": r.driver_name,
+                      "driver_phone": r.driver_phone, "tasks": []})
+        veh["tasks"].append(_task(r))
+
+    fleets_out = []
+    for fl, vehs in sorted(grouped.items()):
+        vlist = []
+        for pl in sorted(vehs):
+            v = vehs[pl]
+            v["task_count"] = len(v["tasks"])
+            v["first"] = v["tasks"][0]["time"]
+            v["last"] = v["tasks"][-1]["time"]
+            vlist.append(v)
+        fleets_out.append({"fleet": fl, "vehicles": vlist, "vehicle_count": len(vlist),
+                           "task_count": sum(v["task_count"] for v in vlist)})
+
+    return {
+        "service_date": service_date.isoformat(), "fleet": fleet, "plate": plate,
+        "total_vehicles": sum(f["vehicle_count"] for f in fleets_out),
+        "total_tasks": len(rows),
+        "fleets": fleets_out,
     }

@@ -32,6 +32,7 @@ const allNav = [
   { to: '/vehicles', label: '車輛管理', icon: '🚐', roles: ['admin', 'dispatcher'] },
   { to: '/drivers', label: '司機管理', icon: '🧑‍✈️', roles: ['admin', 'dispatcher'] },
   { to: '/roster', label: '班表', icon: '📅', roles: ['admin', 'dispatcher'] },
+  { to: '/daily-tasks', label: '車輛任務口卡', icon: '🪪', roles: ['admin', 'dispatcher'] },
   { to: '/addresses', label: '地址簿', icon: '📍', roles: ['admin', 'dispatcher'] },
   { to: '/map', label: '路線地圖', icon: '🗺️', roles: null },
   { to: '/reports', label: '報表', icon: '📈', roles: ['admin', 'dispatcher'] },
