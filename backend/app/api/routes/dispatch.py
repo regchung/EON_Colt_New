@@ -14,6 +14,7 @@ from app.models.dispatch_history import DispatchHistory
 from app.models.order import Order
 from app.models.pool_projection import PoolProjection
 from app.models.route import RouteStop
+from app.models.unassigned_record import UnassignedRecord
 from app.models.user import User
 from app.services import (
     ai_dispatch, assistant, comparison, dispatcher, driver_affinity, forecast, matrix, osrm,
@@ -469,6 +470,124 @@ def matrix_preview(service_date: date, db: Session = Depends(get_db)):
 
 
 _DT_SERVED = "已轉至正式單"
+
+# ---- 未派分析:原因標籤 + 行控回饋類別 ----
+_REASON_LABEL = {
+    "out_of_hours": "服務時段外(06:00–18:00 之外)",
+    "no_welfare": "無福祉車可用",
+    "unroutable": "地址/座標無法路由",
+    "infeasible": "車隊已滿載 / 時間窗無法排入",
+}
+_FEEDBACK_CATS = [
+    "司機可加班補位", "客戶可調整時間", "實際可共乘",
+    "地址或座標有誤", "確實無法服務(需外援)", "其他",
+]
+
+
+@router.get("/unassigned/feedback-categories")
+def unassigned_feedback_categories():
+    """行控回饋可選類別 + 系統原因標籤(供前端下拉與顯示)。"""
+    return {"categories": _FEEDBACK_CATS, "reasons": _REASON_LABEL}
+
+
+@router.get("/unassigned/dates")
+def unassigned_dates(fleet: str | None = None, db: Session = Depends(get_db)):
+    """各日未派訂單數(供管理者點選日期),含已回饋數。"""
+    q = select(
+        UnassignedRecord.service_date, func.count(),
+        func.count().filter(UnassignedRecord.feedback_category.is_not(None)),
+    )
+    if fleet:
+        q = q.where(UnassignedRecord.fleet == fleet)
+    rows = db.execute(
+        q.group_by(UnassignedRecord.service_date)
+        .order_by(UnassignedRecord.service_date.desc())
+    ).all()
+    return [{"service_date": d.isoformat(), "count": c, "feedback_count": fc}
+            for d, c, fc in rows]
+
+
+@router.get("/unassigned")
+def unassigned_list(service_date: date, fleet: str | None = None, db: Session = Depends(get_db)):
+    """某日未派訂單清單(含原因 + 人工派遣車 + 是否已回饋)。"""
+    q = select(UnassignedRecord).where(UnassignedRecord.service_date == service_date)
+    if fleet:
+        q = q.where(UnassignedRecord.fleet == fleet)
+    recs = list(db.scalars(q.order_by(UnassignedRecord.fleet, UnassignedRecord.id)).all())
+    omap = {}
+    oids = [r.order_id for r in recs if r.order_id]
+    if oids:
+        omap = {o.id: o for o in db.scalars(select(Order).where(Order.id.in_(oids))).all()}
+    items = []
+    for r in recs:
+        o = omap.get(r.order_id)
+        items.append({
+            "id": r.id, "fleet": r.fleet,
+            "reason_code": r.reason_code, "reason_label": _REASON_LABEL.get(r.reason_code, r.reason_code),
+            "human_plate": r.human_plate, "human_driver": r.human_driver,
+            "pickup_time": o.pickup_time.strftime("%H:%M") if o and o.pickup_time else None,
+            "passenger": o.passenger_name if o else None,
+            "pickup": o.pickup_address if o else None,
+            "dropoff": o.dropoff_address if o else None,
+            "pax": o.pax if o else None,
+            "welfare": bool(o and (o.vehicle_type == "welfare" or o.need_wheelchair)) if o else False,
+            "has_feedback": r.feedback_category is not None,
+            "feedback_category": r.feedback_category,
+        })
+    return {"service_date": service_date.isoformat(), "fleet": fleet,
+            "count": len(items), "items": items}
+
+
+@router.get("/unassigned/{rid}")
+def unassigned_detail(rid: int, db: Session = Depends(get_db)):
+    """單筆未派明細:系統原因 + 人工派遣車/駕駛 + 訂單資訊 + 現有行控回饋。"""
+    r = db.get(UnassignedRecord, rid)
+    if r is None:
+        raise HTTPException(status_code=404, detail="找不到該未派記錄")
+    o = db.get(Order, r.order_id) if r.order_id else None
+    return {
+        "id": r.id, "service_date": r.service_date.isoformat(), "fleet": r.fleet,
+        "reason_code": r.reason_code, "reason_label": _REASON_LABEL.get(r.reason_code, r.reason_code),
+        "reason_detail": r.reason_detail, "window_min": r.window_min,
+        "human_plate": r.human_plate, "human_driver": r.human_driver,
+        "order": {
+            "source_order_no": r.source_order_no,
+            "pickup_time": o.pickup_time.strftime("%Y-%m-%d %H:%M") if o and o.pickup_time else None,
+            "passenger": o.passenger_name if o else None,
+            "passenger_phone": o.passenger_phone if o else None,
+            "pickup": o.pickup_address if o else None,
+            "dropoff": o.dropoff_address if o else None,
+            "pax": o.pax if o else None,
+            "vehicle_type": o.vehicle_type if o else None,
+            "need_wheelchair": o.need_wheelchair if o else None,
+        } if o else None,
+        "feedback": {
+            "category": r.feedback_category, "note": r.feedback_note,
+            "by": r.feedback_by,
+            "at": r.feedback_at.isoformat() if r.feedback_at else None,
+        },
+    }
+
+
+class UnassignedFeedbackIn(BaseModel):
+    category: str
+    note: str | None = None
+
+
+@router.post("/unassigned/{rid}/feedback")
+def unassigned_feedback(rid: int, body: UnassignedFeedbackIn,
+                        db: Session = Depends(get_db),
+                        current: User = Depends(get_current_user)):
+    """行控填入未派因素(協助系統學習):記錄類別、說明、填寫人與時間。"""
+    r = db.get(UnassignedRecord, rid)
+    if r is None:
+        raise HTTPException(status_code=404, detail="找不到該未派記錄")
+    r.feedback_category = body.category
+    r.feedback_note = body.note
+    r.feedback_by = current.username
+    r.feedback_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"id": r.id, "feedback_category": r.feedback_category, "by": r.feedback_by}
 
 
 @router.get("/daily-tasks/meta")

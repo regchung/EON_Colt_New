@@ -11,7 +11,9 @@ from app.api.routes import (
     config,
     dispatch,
     driver,
+    driver_vehicle,
     drivers,
+    fixed_routes,
     fleet,
     health,
     history,
@@ -77,3 +79,5 @@ app.include_router(history.router, prefix=settings.API_PREFIX, dependencies=prot
 app.include_router(fleet.router, prefix=settings.API_PREFIX, dependencies=protected)
 app.include_router(settings_routes.router, prefix=settings.API_PREFIX)  # 端點各自 require_admin
 app.include_router(roster.router, prefix=settings.API_PREFIX, dependencies=protected)
+app.include_router(fixed_routes.router, prefix=settings.API_PREFIX, dependencies=protected)
+app.include_router(driver_vehicle.router, prefix=settings.API_PREFIX, dependencies=protected)

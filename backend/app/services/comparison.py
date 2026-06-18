@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.dispatch_comparison import DispatchComparison
 from app.models.dispatch_history import DispatchHistory
 from app.models.order import Order
+from app.models.unassigned_record import UnassignedRecord
 from app.models.vehicle import Vehicle
 from app.services import matrix as matrix_svc
 
@@ -132,6 +133,30 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
     unassigned = int(sol.summary.unassigned)
     drive_sec = float(sol.summary.duration)
 
+    # 未派訂單明細 + 推斷原因(供「未派分析」與行控回饋)
+    assigned_ids = set(int(i) for i in df[df["type"] == "pickup"]["id"].tolist()) if len(df) else set()
+    has_welfare = any(v.type == "welfare" for v in vehicles)
+    unassigned_detail = []
+    for o in orders:
+        if o.id in assigned_ids:
+            continue
+        s = _secs_tw(o.pickup_time)
+        need_welfare = o.vehicle_type == "welfare" or bool(o.need_wheelchair)
+        p_idx, d_idx = ord_pts[o.id]
+        if s < DAY_START or s + window_min * 60 > DAY_END:
+            code = "out_of_hours"
+            detail = f"預約上車 {s // 3600:02d}:{(s % 3600) // 60:02d} 落在服務時段(06:00–18:00)之外"
+        elif need_welfare and not has_welfare:
+            code, detail = "no_welfare", "需福祉車,但當日該車行無福祉車可服務"
+        elif int(arr[p_idx][d_idx]) >= UNROUTABLE:
+            code, detail = "unroutable", "上/下車點無法由路網規劃路徑(地址或座標可能有誤)"
+        else:
+            code, detail = "infeasible", "在時間窗、8 小時工時與座位限制下,既有車隊已無餘力排入此趟"
+        unassigned_detail.append({
+            "order_id": o.id, "source_order_no": o.source_order_no,
+            "reason_code": code, "reason_detail": detail,
+        })
+
     human_vehicles = len(plates)
     hd = db.execute(
         select(func.coalesce(func.sum(DispatchHistory.distance_m), 0),
@@ -149,12 +174,39 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
         "saved_vehicles": human_vehicles - vroom_vehicles,
         "human_distance_m": float(hd[0]), "human_minutes": float(hd[1]),
         "vroom_drive_sec": drive_sec,
+        "unassigned_detail": unassigned_detail,
     }
 
 
+def _persist_unassigned(db: Session, fleet: str, service_date: date, window_min: int,
+                        detail: list[dict]) -> int:
+    """把某日未派明細寫入 unassigned_record,並關聯人工派遣的車/駕駛。"""
+    if not detail:
+        return 0
+    nos = [d["source_order_no"] for d in detail if d["source_order_no"]]
+    human = {}
+    if nos:
+        for h in db.scalars(select(DispatchHistory).where(
+                DispatchHistory.fleet == fleet, DispatchHistory.service_date == service_date,
+                DispatchHistory.source_order_no.in_(nos))).all():
+            human[h.source_order_no] = h
+    for d in detail:
+        h = human.get(d["source_order_no"])
+        db.add(UnassignedRecord(
+            service_date=service_date, fleet=fleet,
+            order_id=d["order_id"], source_order_no=d["source_order_no"],
+            reason_code=d["reason_code"], reason_detail=d["reason_detail"],
+            window_min=window_min,
+            human_plate=h.plate if h else None,
+            human_driver=h.driver_name if h else None,
+        ))
+    return len(detail)
+
+
 def run_batch(db: Session, window_min: int = 30, progress=None) -> dict:
-    """對所有(車行×有成行單的日子)做對比,結果寫入 dispatch_comparison。"""
+    """對所有(車行×有成行單的日子)做對比,結果寫入 dispatch_comparison + unassigned_record。"""
     db.query(DispatchComparison).delete()
+    db.query(UnassignedRecord).delete()
     db.commit()
 
     combos = db.execute(
@@ -166,6 +218,7 @@ def run_batch(db: Session, window_min: int = 30, progress=None) -> dict:
 
     done = 0
     skipped = 0
+    n_unassigned = 0
     for fleet, sd in combos:
         try:
             r = compare_day(db, fleet, sd, window_min)
@@ -174,14 +227,17 @@ def run_batch(db: Session, window_min: int = 30, progress=None) -> dict:
         if r is None:
             skipped += 1
             continue
+        detail = r.pop("unassigned_detail", [])
         db.add(DispatchComparison(**r))
+        n_unassigned += _persist_unassigned(db, fleet, sd, window_min, detail)
         done += 1
         if done % 25 == 0:
             db.commit()
             if progress:
                 progress(done, len(combos))
     db.commit()
-    return {"combos": len(combos), "compared": done, "skipped": skipped}
+    return {"combos": len(combos), "compared": done, "skipped": skipped,
+            "unassigned_records": n_unassigned}
 
 
 def sensitivity(db: Session, windows: list[int], fleet: str | None = None,

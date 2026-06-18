@@ -1,0 +1,82 @@
+"""固定行程指定司機 CRUD(需派遣員以上)。"""
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.api.deps import require_dispatcher
+from app.db.session import get_db
+from app.models.driver import Driver
+from app.models.fixed_route import FixedRoute
+from app.models.user import User
+from app.schemas.fixed_route import FixedRouteCreate, FixedRouteOut, FixedRouteUpdate
+
+router = APIRouter(prefix="/fixed-routes", tags=["fixed-routes"])
+
+_VALID_FIELD = {"passenger", "address", "any"}
+
+
+def _driver_plate(db: Session, name: str) -> str | None:
+    from app.models.vehicle import Vehicle
+    d = db.scalar(select(Driver).where(Driver.name == name))
+    if d and d.vehicle_id:
+        v = db.get(Vehicle, d.vehicle_id)
+        return v.plate if v else None
+    return None
+
+
+@router.get("", response_model=list[FixedRouteOut])
+def list_routes(db: Session = Depends(get_db), _: User = Depends(require_dispatcher)):
+    return list(db.scalars(select(FixedRoute).order_by(FixedRoute.label, FixedRoute.time_slot)).all())
+
+
+@router.get("/with-status")
+def list_with_status(db: Session = Depends(get_db), _: User = Depends(require_dispatcher)):
+    """清單 + 司機是否有對應車輛(供前端標示「無車」需補)。"""
+    rows = list(db.scalars(select(FixedRoute).order_by(FixedRoute.label, FixedRoute.time_slot)).all())
+    out = []
+    for r in rows:
+        plate = _driver_plate(db, r.driver_name)
+        out.append({
+            "id": r.id, "label": r.label, "keyword": r.keyword,
+            "driver_name": r.driver_name, "time_slot": r.time_slot,
+            "match_field": r.match_field, "fleet": r.fleet, "active": r.active, "note": r.note,
+            "driver_plate": plate, "driver_has_vehicle": plate is not None,
+        })
+    return out
+
+
+@router.post("", response_model=FixedRouteOut, status_code=201)
+def create_route(body: FixedRouteCreate, db: Session = Depends(get_db),
+                 _: User = Depends(require_dispatcher)):
+    if body.match_field not in _VALID_FIELD:
+        raise HTTPException(status_code=400, detail="match_field 須為 passenger/address/any")
+    r = FixedRoute(**body.model_dump())
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return r
+
+
+@router.put("/{rid}", response_model=FixedRouteOut)
+def update_route(rid: int, body: FixedRouteUpdate, db: Session = Depends(get_db),
+                 _: User = Depends(require_dispatcher)):
+    r = db.get(FixedRoute, rid)
+    if r is None:
+        raise HTTPException(status_code=404, detail="固定行程不存在")
+    if body.match_field not in _VALID_FIELD:
+        raise HTTPException(status_code=400, detail="match_field 須為 passenger/address/any")
+    for k, v in body.model_dump().items():
+        setattr(r, k, v)
+    db.commit()
+    db.refresh(r)
+    return r
+
+
+@router.delete("/{rid}")
+def delete_route(rid: int, db: Session = Depends(get_db), _: User = Depends(require_dispatcher)):
+    r = db.get(FixedRoute, rid)
+    if r is None:
+        raise HTTPException(status_code=404, detail="固定行程不存在")
+    db.delete(r)
+    db.commit()
+    return {"deleted": rid}
