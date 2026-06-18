@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, ref, computed } from 'vue'
 import client from '../api/client'
+import TrendChart from '../components/TrendChart.vue'
 
 const today = new Date().toISOString().slice(0, 10)
 const ago13 = new Date(Date.now() - 13 * 86400000).toISOString().slice(0, 10)
@@ -37,12 +38,21 @@ async function exportCsv() {
   URL.revokeObjectURL(url)
 }
 
-const maxDay = computed(() =>
-  data.value ? Math.max(1, ...data.value.by_day.map((d) => d.total)) : 1
-)
 function pct(n, total) {
   return total ? Math.round((n / total) * 100) : 0
 }
+
+// 趨勢圖資料(由 by_day 推導)
+const trendLabels = computed(() => (data.value?.by_day || []).map((d) => d.date.slice(5)))
+const volumeSeries = computed(() => [
+  { name: '總數', color: '#4363d8', values: (data.value?.by_day || []).map((d) => d.total) },
+  { name: '已派', color: '#3cb44b', values: (data.value?.by_day || []).map((d) => d.assigned) },
+  { name: '未派', color: '#e6194B', values: (data.value?.by_day || []).map((d) => d.unassigned), dashed: true },
+])
+const rateSeries = computed(() => [
+  { name: '派遣率%', color: '#f58231',
+    values: (data.value?.by_day || []).map((d) => pct(d.assigned, d.total)) },
+])
 </script>
 
 <template>
@@ -68,6 +78,13 @@ function pct(n, total) {
         <div class="display-6 fw-bold text-info">{{ data.totals.vehicles_active }}/{{ data.totals.vehicles_total }}</div><small class="text-muted">可用/總車輛</small></div></div></div>
     </div>
 
+    <!-- 區間營運趨勢 -->
+    <div class="card shadow-sm mb-3"><div class="card-body">
+      <h6 class="mb-2">區間營運趨勢（{{ data.date_from.slice(5) }} ～ {{ data.date_to.slice(5) }}）</h6>
+      <TrendChart v-if="data.by_day.length > 1" :labels="trendLabels" :series="volumeSeries" :height="240" unit=" 趟" />
+      <p v-else class="text-muted small mb-0">區間需 2 天以上才繪製趨勢線。</p>
+    </div></div>
+
     <div class="row g-3">
       <!-- 狀態分佈 -->
       <div class="col-12 col-lg-6"><div class="card shadow-sm h-100"><div class="card-body">
@@ -89,18 +106,11 @@ function pct(n, total) {
         </div>
       </div></div></div>
 
-      <!-- 每日量 -->
+      <!-- 派遣率趨勢 -->
       <div class="col-12 col-lg-7"><div class="card shadow-sm h-100"><div class="card-body">
-        <h6>每日訂單量</h6>
-        <div v-for="d in data.by_day" :key="d.date" class="d-flex align-items-center mb-1">
-          <span class="small text-muted" style="width:90px">{{ d.date.slice(5) }}</span>
-          <div class="progress flex-grow-1" style="height:16px">
-            <div class="progress-bar bg-success" :style="{ width: pct(d.assigned, maxDay) + '%' }">{{ d.assigned || '' }}</div>
-            <div class="progress-bar bg-danger" :style="{ width: pct(d.unassigned, maxDay) + '%' }">{{ d.unassigned || '' }}</div>
-          </div>
-          <span class="small ms-2" style="width:36px">{{ d.total }}</span>
-        </div>
-        <small class="text-muted">🟩 已派　🟥 未派</small>
+        <h6>每日派遣率趨勢</h6>
+        <TrendChart v-if="data.by_day.length > 1" :labels="trendLabels" :series="rateSeries" :height="200" unit="%" />
+        <p v-else class="text-muted small mb-0">區間需 2 天以上才繪製趨勢線。</p>
       </div></div></div>
 
       <!-- 每車派遣量 -->

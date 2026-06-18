@@ -103,16 +103,16 @@ orders 新增 `pool_consent_at`/`pool_consent_by`(共乘同意留痕)。
 4. **🟠 roadmap 其他自建項**(見 `docs/self-build-roadmap.md`):
    - **文件智慧匯入**:`MarkItDown` 轉文字 → Claude 抽取結構化訂單 → 接現有匯入(PDF/Word/怪 Excel)。新增 `doc_ingest.py` + `POST /orders/import-doc`。
    - **調度員 AI 助理**:擴充 `ai_dispatch.py` 為對話 + Claude tool-use(查單/試算/排班),建議→確認→寫入。
-5. **排班進階**:重排時對 `ongoing` 訂單用 VROOM `steps` 強制鎖定在原車序列(目前是「排除不動」簡化版)。
-6. **報表趨勢圖**:CSV 匯出已完成;再加區間趨勢圖。
-7. **測試**:已補 `settings`/`roster`/`zone_affinity`/`assign`/時區 的 pytest(見已完成,36 passed)。
-   `pool_suggest`/`comparison` 求解測試待補——需 CI 內備 OSRM 矩陣(目前 CI 無 OSRM,故僅測純函式)。
-8. **時區收尾**:派遣/對比已修(+08);尚待前端顯示與報表全鏈盤點(確保各處一致)。
-9. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規。
+5. **測試**:已補 `settings`/`roster`/`zone_affinity`/`assign`/時區 的 pytest(見已完成,36 passed)。
+   `pool_suggest`/`comparison`/`dispatcher`(含 ongoing 鎖定)求解測試待補——需 CI 內備 OSRM 矩陣(目前 CI 無 OSRM,故僅測純函式)。
+6. **時區收尾**:派遣/對比已修(+08);尚待前端顯示與報表全鏈盤點(確保各處一致)。
+7. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規。
 
 > ⏸ **徵詢成功率學習**(見上方「🔔 啟動主動告知」):等 `pool-consent` 累積真實徵詢結果後再做。
 
 ### ✅ 已完成里程碑(近→遠)
+- **排班進階:ongoing 鎖定原車**:重排(`dispatcher.run_dispatch`)現納入進行中(`ongoing`)訂單,以**唯一技能**(`LOCK_SKILL_BASE+vid`)硬鎖在原指派車——實測 VROOM `steps` 非硬約束(會被重排/搬走),改用 skills 才能真鎖。ongoing 模型為 **delivery-only Job**(乘客已上車、初始載重佔位到下車,不重排上車);其車輛即使班表未涵蓋也強制納入;寫回保持 `status=ongoing`、更新 ETA 與路線。實測:下車點靠近他車仍鎖原車、pending 同時正常排入。(近似:車輛起點仍用設定起點,真實當前位置待司機端 GPS 回報。)
+- **報表區間趨勢圖**:零依賴 `components/TrendChart.vue`(多序列 SVG 折線 + 格線 + x 標籤抽樣 + hover tooltip + 圖例);報表頁加「區間營運趨勢」(總數/已派/未派)與「每日派遣率趨勢」,資料源用既有 `/reports/overview` 的 `by_day`(無新後端)。
 - **班別時段細緻化**:`/roster/patterns` 回傳每車班別 `shift_start/end`;班表頁週期班表每車加「起/迄」時間輸入(套用所有上班日,留空=06–18 預設)。即時派遣(`dispatcher`)已將班別時段作為車輛 `time_window`(`win=max(day_start,rs)…min(day_end,re)`),設定即生效。
 - **服務層測試擴充**:`tests/test_services.py`(純函式:`settings._coerce`/預設完整性、`roster._secs`、`comparison._secs_tw` 鎖定 +08 時區 bug、`zone_affinity._vehicle_feasible`、`forecast.WD_NAMES`)+ `tests/test_endpoints.py`(settings/roster 授權、`apply-forecast` dry-run、手動指派生命週期含清理)。共 **36 passed**。pytest 在 `requirements-dev.txt`(CI 已裝;本機執行容器需 `pip install -r requirements-dev.txt` 後再跑)。
 - **班表一鍵套用建議排車數**:`roster.apply_forecast()` + `/roster/apply-forecast`(dry_run 預覽/寫入);依需求預測各 weekday 建議數,挑該車行歷史最常出勤前 N 台覆寫週期班表,缺口顯示提示。班表頁「需求預測」卡加「套用建議到班表」鈕 + 實派列。(發現:新北建議 17/日但歷史僅湊 ~11-12 台,缺口可手動補。)

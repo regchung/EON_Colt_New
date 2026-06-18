@@ -32,6 +32,7 @@ DAY_START = 6 * 3600                 # 接送服務時段起 06:00
 DAY_END = 18 * 3600                  # 接送服務時段迄 18:00
 MAX_WORK_SEC = 8 * 3600              # 每車每日工時上限 8h(行車+服務近似)
 EXCL_CAP = 100                       # 「不共乘」維度容量;未同意共乘者佔滿 → 獨佔整車
+LOCK_SKILL_BASE = 10000              # ongoing 訂單以「唯一技能」硬鎖原車(避開福祉 skill=1)
 
 
 TW = timezone(timedelta(hours=8))   # 台灣時區(資料庫存 UTC,排班以 +08 牆鐘換算)
@@ -87,6 +88,29 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         ).all()
     )
 
+    # 進行中(已上車、待下車)訂單:重排時必須鎖在「原指派車」、不可被搬走或重排上車。
+    # 模型為 delivery-only Job(乘客已在車上佔位到下車),以唯一技能硬鎖原車。
+    ongoing = list(
+        db.scalars(
+            select(Order)
+            .where(Order.service_date == service_date)
+            .where(Order.status == "ongoing")
+            .where(Order.assigned_vehicle_id.is_not(None))
+            .where(Order.dropoff_lng.is_not(None), Order.dropoff_lat.is_not(None))
+            .order_by(Order.assigned_vehicle_id, Order.dispatch_seq)
+        ).all()
+    )
+    # 有進行中行程的車一定在出勤中:即使班表未涵蓋,也強制納入問題
+    veh_ids = {v.id for v in vehicles}
+    extra_ids = {o.assigned_vehicle_id for o in ongoing} - veh_ids
+    if extra_ids:
+        vehicles.extend(
+            db.scalars(
+                select(Vehicle).where(Vehicle.id.in_(extra_ids), Vehicle.active.is_(True))
+                .order_by(Vehicle.id)
+            ).all()
+        )
+
     if not orders:
         return {"error": "該日沒有可排班的已編碼訂單", "skipped_no_coords": [o.id for o in skipped]}
     if not vehicles:
@@ -119,6 +143,9 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             pt_index(o.pickup_lng, o.pickup_lat),
             pt_index(o.dropoff_lng, o.dropoff_lat),
         )
+    # 進行中訂單只剩「下車點」需排(上車已完成)
+    ongoing_pts = {o.id: pt_index(o.dropoff_lng, o.dropoff_lat) for o in ongoing}
+    lock_vehicles = {o.assigned_vehicle_id for o in ongoing}
 
     # 3) 取 OSRM 行車時間矩陣
     m = matrix_svc.build_matrix(points)
@@ -139,11 +166,14 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         rs, re = duty.get(v.id, (None, None))
         win_start = max(day_start, rs) if rs is not None else day_start
         win_end = min(day_end, re) if re is not None else day_end
+        skills = {1} if v.type == "welfare" else set()
+        if v.id in lock_vehicles:
+            skills.add(LOCK_SKILL_BASE + v.id)   # 鎖住其進行中行程的專屬技能
         kwargs = dict(
             id=v.id,
             profile="car",
             capacity=[max(1, v.seats or 1), EXCL_CAP],  # [座位, 不共乘維度]
-            skills={1} if v.type == "welfare" else set(),
+            skills=skills,
             time_window=vroom.TimeWindow(win_start, win_end),
             max_travel_time=prm["max_work_sec"],
         )
@@ -170,6 +200,21 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             priority=50,
         )
 
+    # 進行中訂單:delivery-only job,以專屬技能硬鎖原車(乘客已在車上,初始載重佔位到下車)
+    for o in ongoing:
+        excl = EXCL_CAP if (prm["require_consent"] and not o.allow_pool) else 1
+        skills = {LOCK_SKILL_BASE + o.assigned_vehicle_id}
+        if _is_welfare(o):
+            skills.add(1)
+        problem.add_job(vroom.Job(
+            id=o.id,
+            location=ongoing_pts[o.id],
+            delivery=vroom.Amount([max(1, o.pax or 1), excl]),
+            skills=skills,
+            default_service=prm["teardown_sec"],
+            priority=100,  # 已在車上,務必完成下車
+        ))
+
     sol = problem.solve(exploration_level=5, nb_threads=4)
 
     # 5) 寫回結果(先清空當日待排訂單的舊指派,確保可重複排班)
@@ -180,6 +225,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         o.status = "imported"
 
     by_id = {o.id: o for o in orders}
+    ongoing_by_id = {o.id: o for o in ongoing}
     midnight = datetime.combine(service_date, time(0), tzinfo=TW)
     routes_report: dict[int, list[dict]] = {}
     pickup_seq: dict[int, int] = {}     # 訂單派遣順序(只計上車)
@@ -225,6 +271,17 @@ def run_dispatch(db: Session, service_date: date) -> dict:
                 routes_report[vid].append(
                     {"order_id": oid, "type": "下車", "eta": arr_hhmm, "addr": addr}
                 )
+        elif stype == "job" and sid == sid:
+            # 進行中訂單的下車(delivery-only job);保持 ongoing 狀態,僅更新預計下車與路線
+            oid = int(sid)
+            o = ongoing_by_id.get(oid)
+            if o:
+                o.eta = eta_dt
+                kind = "delivery"
+                addr = o.dropoff_address
+                routes_report[vid].append(
+                    {"order_id": oid, "type": "下車(進行中)", "eta": arr_hhmm, "addr": addr}
+                )
 
         sseq = stop_seq.get(vid, 0) + 1
         stop_seq[vid] = sseq
@@ -245,6 +302,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         "orders_total": len(orders),
         "assigned": len(assigned_ids),
         "unassigned": unassigned,
+        "ongoing_locked": len(ongoing),
         "skipped_no_coords": [o.id for o in skipped],
         "total_duration_sec": int(sol.summary.duration),
         "routes": routes_report,
