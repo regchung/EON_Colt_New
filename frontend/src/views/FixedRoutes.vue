@@ -15,7 +15,7 @@ const TIME_SLOTS = ['全天', '早', '午', '午後', '早晚']
 const MATCH_FIELDS = [
   { v: 'any', t: '任意欄位' }, { v: 'passenger', t: '乘客姓名' }, { v: 'address', t: '地址/補充' },
 ]
-const blank = () => ({ id: null, label: '', keyword: '', driver_name: '', time_slot: '全天', match_field: 'any', fleet: '', note: '', active: true })
+const blank = () => ({ id: null, label: '', keyword: '', match_name: '', driver_name: '', time_slot: '全天', match_field: 'any', fleet: '', note: '', active: true })
 const form = ref(blank())
 
 function flash(m) { toast.value = m; setTimeout(() => { toast.value = '' }, 3000) }
@@ -27,18 +27,22 @@ async function load() {
 onMounted(load)
 
 function edit(r) {
-  form.value = { ...r, fleet: r.fleet || '', note: r.note || '' }
+  form.value = { ...r, keyword: r.keyword || '', match_name: r.match_name || '', fleet: r.fleet || '', note: r.note || '' }
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 function reset() { form.value = blank() }
 
 async function save() {
   error.value = ''
-  if (!form.value.label || !form.value.keyword || !form.value.driver_name) {
-    error.value = '路線名稱、匹配關鍵字、指定司機為必填'; return
+  if (!form.value.label || !form.value.driver_name) {
+    error.value = '路線名稱、指定司機為必填'; return
+  }
+  if (!form.value.keyword.trim() && !form.value.match_name.trim()) {
+    error.value = '地點關鍵字與指定姓名至少需填一項'; return
   }
   const body = {
-    label: form.value.label, keyword: form.value.keyword, driver_name: form.value.driver_name,
+    label: form.value.label, keyword: form.value.keyword.trim() || null,
+    match_name: form.value.match_name.trim() || null, driver_name: form.value.driver_name,
     time_slot: form.value.time_slot, match_field: form.value.match_field,
     fleet: form.value.fleet || null, note: form.value.note || null, active: form.value.active,
   }
@@ -68,8 +72,10 @@ async function del(r) {
     <div class="row g-2">
       <div class="col-6 col-md-2"><label class="form-label small mb-0">路線名稱</label>
         <input v-model="form.label" class="form-control form-control-sm" placeholder="成德國中-2" /></div>
-      <div class="col-6 col-md-2"><label class="form-label small mb-0">匹配關鍵字</label>
-        <input v-model="form.keyword" class="form-control form-control-sm" placeholder="成德國中 / 錸工廠 / 向怡" /></div>
+      <div class="col-6 col-md-2"><label class="form-label small mb-0">地點關鍵字</label>
+        <input v-model="form.keyword" class="form-control form-control-sm" placeholder="成德國中 / 錸工廠" /></div>
+      <div class="col-6 col-md-2"><label class="form-label small mb-0">指定姓名</label>
+        <input v-model="form.match_name" class="form-control form-control-sm" placeholder="比對乘客姓名" /></div>
       <div class="col-6 col-md-2"><label class="form-label small mb-0">指定司機</label>
         <input v-model="form.driver_name" class="form-control form-control-sm" placeholder="吳奇龍" /></div>
       <div class="col-6 col-md-2"><label class="form-label small mb-0">時段</label>
@@ -110,7 +116,7 @@ async function del(r) {
           <tbody>
             <tr v-for="(it, i) in match.items" :key="i">
               <td class="text-nowrap">{{ it.time }}</td>
-              <td>{{ it.label }}</td><td>{{ it.driver_name }}</td>
+              <td>{{ it.label }} <span class="badge bg-light text-muted">{{ it.matched_by }}</span></td><td>{{ it.driver_name }}</td>
               <td><span :class="it.resolvable ? 'badge bg-success' : 'badge bg-danger'">{{ it.plate || '無車' }}</span></td>
               <td>{{ it.passenger }}</td>
               <td class="text-muted">{{ it.pickup }} → {{ it.dropoff }}</td>
@@ -126,19 +132,19 @@ async function del(r) {
   <div class="table-responsive">
     <table class="table table-sm table-hover align-middle">
       <thead class="table-light"><tr>
-        <th>路線</th><th>關鍵字</th><th>指定司機</th><th>對應車</th><th>時段</th><th>匹配欄位</th><th>車行</th><th>啟用</th><th></th>
+        <th>路線</th><th>地點關鍵字</th><th>指定姓名</th><th>指定司機</th><th>對應車</th><th>時段</th><th>車行</th><th>啟用</th><th></th>
       </tr></thead>
       <tbody>
         <tr v-for="r in rows" :key="r.id">
           <td class="fw-semibold">{{ r.label }}</td>
-          <td><code>{{ r.keyword }}</code></td>
+          <td><code v-if="r.keyword">{{ r.keyword }}</code><span v-else class="text-muted">—</span></td>
+          <td>{{ r.match_name || '—' }}</td>
           <td>{{ r.driver_name }}</td>
           <td>
             <span v-if="r.driver_has_vehicle" class="badge bg-success">{{ r.driver_plate }}</span>
             <span v-else class="badge bg-danger" title="此司機在系統無車,需補建">無車</span>
           </td>
           <td>{{ r.time_slot }}</td>
-          <td class="small text-muted">{{ MATCH_FIELDS.find(m => m.v === r.match_field)?.t || r.match_field }}</td>
           <td class="small">{{ r.fleet || '—' }}</td>
           <td>{{ r.active ? '✓' : '✗' }}</td>
           <td class="text-nowrap">

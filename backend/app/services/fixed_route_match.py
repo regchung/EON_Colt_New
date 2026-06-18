@@ -59,16 +59,18 @@ def match_for_date(db: Session, service_date: date) -> dict:
 
     for o in orders:
         hay = _haystack(o)
-        if not hay:
-            continue
+        pname = o.passenger_name or ""
         h = _hour(o)
         for r in rules:
-            if r.keyword and r.keyword in hay and _slot_ok(r.time_slot, h):
+            kw_ok = bool(r.keyword) and r.keyword in hay
+            name_ok = bool(r.match_name) and r.match_name in pname
+            if (kw_ok or name_ok) and _slot_ok(r.time_slot, h):
                 veh = driver_resolve.resolve(db, r.driver_name, service_date)
                 rec = {
                     "order_id": o.id, "rule_id": r.id, "label": r.label,
                     "driver_name": r.driver_name, "time_slot": r.time_slot,
-                    "keyword": r.keyword,
+                    "keyword": r.keyword, "match_name": r.match_name,
+                    "matched_by": "姓名" if (name_ok and not kw_ok) else "地點",
                     "time": o.pickup_time.astimezone(TW).strftime("%H:%M") if o.pickup_time else None,
                     "passenger": o.passenger_name,
                     "pickup": o.pickup_address, "dropoff": o.dropoff_address,

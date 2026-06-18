@@ -40,7 +40,7 @@ def list_with_status(db: Session = Depends(get_db), _: User = Depends(require_di
     for r in rows:
         plate = _driver_plate(db, r.driver_name)
         out.append({
-            "id": r.id, "label": r.label, "keyword": r.keyword,
+            "id": r.id, "label": r.label, "keyword": r.keyword, "match_name": r.match_name,
             "driver_name": r.driver_name, "time_slot": r.time_slot,
             "match_field": r.match_field, "fleet": r.fleet, "active": r.active, "note": r.note,
             "driver_plate": plate, "driver_has_vehicle": plate is not None,
@@ -60,6 +60,8 @@ def create_route(body: FixedRouteCreate, db: Session = Depends(get_db),
                  _: User = Depends(require_dispatcher)):
     if body.match_field not in _VALID_FIELD:
         raise HTTPException(status_code=400, detail="match_field 須為 passenger/address/any")
+    if not (body.keyword and body.keyword.strip()) and not (body.match_name and body.match_name.strip()):
+        raise HTTPException(status_code=400, detail="關鍵字與指定姓名至少需填一項")
     r = FixedRoute(**body.model_dump())
     db.add(r)
     db.commit()
@@ -75,6 +77,8 @@ def update_route(rid: int, body: FixedRouteUpdate, db: Session = Depends(get_db)
         raise HTTPException(status_code=404, detail="固定行程不存在")
     if body.match_field not in _VALID_FIELD:
         raise HTTPException(status_code=400, detail="match_field 須為 passenger/address/any")
+    if not (body.keyword and body.keyword.strip()) and not (body.match_name and body.match_name.strip()):
+        raise HTTPException(status_code=400, detail="關鍵字與指定姓名至少需填一項")
     for k, v in body.model_dump().items():
         setattr(r, k, v)
     db.commit()

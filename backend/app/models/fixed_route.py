@@ -16,7 +16,8 @@ class FixedRoute(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     label: Mapped[str] = mapped_column(String(60))          # 路線顯示名,如「成德國中-2」
-    keyword: Mapped[str] = mapped_column(String(60), index=True)  # 匹配文字,如「成德國中」「錸工廠」「向怡」
+    keyword: Mapped[str | None] = mapped_column(String(60), index=True)  # 地點匹配文字(可空),如「成德國中」「錸工廠」
+    match_name: Mapped[str | None] = mapped_column(String(50))  # 指定乘客姓名(可空):比對訂單乘客姓名
     driver_name: Mapped[str] = mapped_column(String(50))    # 指定司機
     time_slot: Mapped[str] = mapped_column(String(20), default="全天")  # 全天/早/午/午後/早晚
     match_field: Mapped[str] = mapped_column(String(20), default="any")  # passenger/address/any
