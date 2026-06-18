@@ -265,6 +265,21 @@ def assign_order(id: int, vehicle_id: int, db: Session = Depends(get_db)):
 ALLOWED_STATUS = {"imported", "scheduled", "ongoing", "done", "canceled"}
 
 
+@router.post("/{id}/unassign", response_model=OrderOut)
+def unassign_order(id: int, db: Session = Depends(get_db)):
+    """解除指派(拖回未指派):回到 imported、清除車輛/順序/ETA。"""
+    o = crud.get(db, id)
+    if not o:
+        raise HTTPException(status_code=404, detail="Order not found")
+    o.status = "imported"
+    o.assigned_vehicle_id = None
+    o.dispatch_seq = None
+    o.eta = None
+    db.commit()
+    db.refresh(o)
+    return o
+
+
 @router.post("/{id}/cancel", response_model=OrderOut)
 def cancel_order(id: int, db: Session = Depends(get_db)):
     """取消訂單:標記 canceled 並清除派遣指派(下次排班會自動排除)。"""

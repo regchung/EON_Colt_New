@@ -1,0 +1,99 @@
+<script setup>
+import { onMounted, ref } from 'vue'
+import client from '../api/client'
+
+const date = ref(new Date().toISOString().slice(0, 10))
+const board = ref(null)
+const loading = ref(false)
+const error = ref('')
+const dragId = ref(null)
+const dragFrom = ref(null)
+
+async function load() {
+  loading.value = true; error.value = ''
+  try {
+    const { data } = await client.get('/dispatch/board', { params: { service_date: date.value } })
+    board.value = data
+  } catch (e) { error.value = e.response?.data?.detail || '讀取失敗' } finally { loading.value = false }
+}
+onMounted(load)
+
+function onDragStart(orderId, fromVid) { dragId.value = orderId; dragFrom.value = fromVid }
+async function onDrop(toVid) {
+  const id = dragId.value
+  dragId.value = null
+  if (id == null || toVid === dragFrom.value) return
+  try {
+    if (toVid === null) await client.post(`/orders/${id}/unassign`)
+    else await client.post(`/orders/${id}/assign`, null, { params: { vehicle_id: toVid } })
+    await load()
+  } catch (e) { error.value = e.response?.data?.detail || '搬移失敗' }
+}
+</script>
+
+<template>
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    <span class="fw-semibold">🧲 派遣看板</span>
+    <input v-model="date" type="date" class="form-control form-control-sm" style="width:160px" @change="load" />
+    <button class="btn btn-sm btn-primary" :disabled="loading" @click="load">{{ loading ? '讀取中…' : '重新整理' }}</button>
+    <span v-if="board" class="small text-muted">出勤/有派 {{ board.vehicles.length }} 車 · 未指派 {{ board.unassigned_count }}</span>
+    <span class="small text-muted ms-auto">拖曳訂單卡到其他車欄即重新指派;拖回「未指派」可卸載。紅框=時間衝突。</span>
+  </div>
+  <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>
+
+  <div v-if="board" class="board-scroll d-flex gap-2 pb-2" style="overflow-x:auto">
+    <!-- 未指派欄 -->
+    <div class="board-col border rounded bg-light" @dragover.prevent @drop="onDrop(null)">
+      <div class="board-head bg-secondary text-white px-2 py-1 small fw-semibold">
+        未指派 <span class="badge bg-light text-dark">{{ board.unassigned.length }}</span>
+      </div>
+      <div class="board-body p-1">
+        <div v-for="t in board.unassigned" :key="t.order_id" class="trip-card border rounded p-1 mb-1 bg-white"
+             draggable="true" @dragstart="onDragStart(t.order_id, null)">
+          <div class="d-flex justify-content-between"><b>{{ t.time }}</b>
+            <span v-if="t.welfare" class="badge bg-warning text-dark">福</span></div>
+          <div class="small">{{ t.passenger || '—' }}</div>
+          <div class="text-muted" style="font-size:.72rem">{{ t.pickup }} → {{ t.dropoff }}</div>
+        </div>
+        <div v-if="!board.unassigned.length" class="text-muted small text-center py-2">（無）</div>
+      </div>
+    </div>
+
+    <!-- 各車欄 -->
+    <div v-for="v in board.vehicles" :key="v.vehicle_id" class="board-col border rounded"
+         @dragover.prevent @drop="onDrop(v.vehicle_id)">
+      <div class="board-head px-2 py-1 small" :class="v.conflicts ? 'bg-danger text-white' : 'bg-primary text-white'">
+        <div class="d-flex justify-content-between">
+          <b>{{ v.plate }}</b>
+          <span><span class="badge bg-light text-dark">{{ v.trip_count }}</span>
+            <span v-if="v.conflicts" class="badge bg-warning text-dark ms-1">衝突{{ v.conflicts }}</span></span>
+        </div>
+        <div style="font-size:.72rem">{{ v.driver || '—' }} · {{ v.fleet }}<span v-if="!v.on_duty"> · 非班表</span></div>
+      </div>
+      <div class="board-body p-1">
+        <div v-for="t in v.trips" :key="t.order_id"
+             class="trip-card border rounded p-1 mb-1"
+             :class="t.conflict ? 'border-danger border-2 bg-danger-subtle' : 'bg-white'"
+             draggable="true" @dragstart="onDragStart(t.order_id, v.vehicle_id)">
+          <div class="d-flex justify-content-between"><b>{{ t.time }}</b>
+            <span>
+              <span v-if="t.welfare" class="badge bg-warning text-dark">福</span>
+              <span v-if="t.status === 'ongoing'" class="badge bg-success">進</span>
+            </span>
+          </div>
+          <div class="small">{{ t.passenger || '—' }}</div>
+          <div class="text-muted" style="font-size:.72rem">{{ t.pickup }} → {{ t.dropoff }}</div>
+        </div>
+        <div v-if="!v.trips.length" class="text-muted small text-center py-2">（空車）</div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+.board-col { width: 220px; min-width: 220px; max-height: 78vh; display: flex; flex-direction: column; }
+.board-head { position: sticky; top: 0; z-index: 1; }
+.board-body { overflow-y: auto; flex: 1; min-height: 60px; }
+.trip-card { cursor: grab; }
+.trip-card:active { cursor: grabbing; }
+</style>

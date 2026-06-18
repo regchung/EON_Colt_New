@@ -598,6 +598,13 @@ def unassigned_feedback(rid: int, body: UnassignedFeedbackIn,
     return {"id": r.id, "feedback_category": r.feedback_category, "by": r.feedback_by}
 
 
+@router.get("/board")
+def dispatch_board_view(service_date: date, db: Session = Depends(get_db)):
+    """派遣看板:某日各車趟次(含時間衝突)+ 未指派欄,供前端拖放微調。"""
+    from app.services import dispatch_board as board_svc
+    return board_svc.board(db, service_date)
+
+
 @router.get("/daily-tasks/meta")
 def daily_tasks_meta(db: Session = Depends(get_db)):
     """口卡查詢的過濾選項:資料日期範圍 + 車行清單(供前端預設日期與下拉)。"""
