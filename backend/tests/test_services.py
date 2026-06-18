@@ -3,7 +3,7 @@
 涵蓋:settings 型別轉換與預設、roster 時間換算、comparison 時區換算(鎖定曾發生的
 UTC→+08 上車時間 bug)、zone_affinity 硬條件、forecast weekday 名稱。
 """
-from datetime import datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
@@ -185,7 +185,10 @@ def test_assistant_tools_schema_integrity():
 
 
 def test_assistant_chat_no_key_graceful():
+    from app.core.config import settings as cfg
     from app.services import assistant
+    if cfg.ANTHROPIC_API_KEY:
+        pytest.skip("已設定 ANTHROPIC_API_KEY,跳過無金鑰降級測試")
     db = SessionLocal()
     try:
         r = assistant.chat(db, [{"role": "user", "content": "今天幾單?"}])
@@ -202,3 +205,34 @@ def test_assistant_run_tool_unknown():
         assert "error" in assistant._run_tool(db, "no_such_tool", {})
     finally:
         db.close()
+
+
+# ---------- 時區收尾:寫入一律存台灣 +08 ----------
+def test_order_schema_naive_pickup_gets_tw():
+    from app.schemas.order import OrderCreate
+    oc = OrderCreate(service_date="2026-06-25", pickup_time="2026-06-25T09:00:00",
+                     pickup_address="A", dropoff_address="B")
+    assert oc.pickup_time.utcoffset() == timedelta(hours=8)
+    assert oc.pickup_time.hour == 9   # 不被位移
+
+
+def test_order_schema_aware_pickup_preserved():
+    from app.schemas.order import OrderCreate
+    oc = OrderCreate(service_date="2026-06-25", pickup_time="2026-06-25T09:00:00+08:00",
+                     pickup_address="A", dropoff_address="B")
+    assert oc.pickup_time.utcoffset() == timedelta(hours=8)
+    assert oc.pickup_time.hour == 9
+
+
+def test_importer_parse_time_is_tw():
+    from app.services.importer import _parse_time_to_dt
+    dt = _parse_time_to_dt("15:00", date(2026, 6, 25))
+    assert dt.utcoffset() == timedelta(hours=8)
+    assert dt.hour == 15   # 與 comparison._secs_tw 一致:astimezone(TW) 仍是 15:00
+
+
+def test_importer_tw_roundtrip_with_secs_tw():
+    """匯入的上車時間經 comparison._secs_tw 換算,應回到原本的台灣牆鐘秒數(不位移)。"""
+    from app.services.importer import _parse_time_to_dt
+    dt = _parse_time_to_dt("15:30", date(2026, 6, 25))
+    assert comparison._secs_tw(dt) == 15 * 3600 + 30 * 60

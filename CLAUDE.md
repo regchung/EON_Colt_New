@@ -103,14 +103,15 @@ orders 新增 `pool_consent_at`/`pool_consent_by`(共乘同意留痕)。
 4. **🟠 調度員 AI 助理 → 受控寫入**:助理 v1(唯讀建議,Claude tool-use)已上線(見里程碑)。
    後續加「建議→確認→寫入」受控工具(run_dispatch/assign),需 tool-use 多輪確認 + 前端確認 UI(待金鑰可實測再做)。
    (文件智慧匯入已完成,見里程碑。)
-5. **測試**:已補 `settings`/`roster`/`zone_affinity`/`assign`/時區/`doc_ingest`/`assistant` 的 pytest(見已完成,47 passed)。
+5. **測試**:已補 `settings`/`roster`/`zone_affinity`/`assign`/時區/`doc_ingest`/`assistant` 的 pytest(見已完成,50 passed)。
    `pool_suggest`/`comparison`/`dispatcher`(含 ongoing 鎖定)求解測試待補——需 CI 內備 OSRM 矩陣(目前 CI 無 OSRM,故僅測純函式)。
-6. **時區收尾**:派遣/對比已修(+08);尚待前端顯示與報表全鏈盤點(確保各處一致)。
-7. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規。
+6. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規
+   (含 AI 文件匯入個資外送 → 評估地端抽取)。
 
 > ⏸ **徵詢成功率學習**(見上方「🔔 啟動主動告知」):等 `pool-consent` 累積真實徵詢結果後再做。
 
 ### ✅ 已完成里程碑(近→遠)
+- **時區收尾(全鏈一致 +08)**:修正三個寫入路徑一律存台灣時間——`importer.py`(車行批次,原誤標 UTC→改 +08)、`OrderBase.pickup_time` 驗證器(手動建單 / AI 文件匯入的 naive datetime→補 +08)、`history_import` 本即 +08。**根因 #2**:DB(timestamptz)讀回預設 UTC,使 OrderOut 序列化 / `strftime` / 前端 `slice(11,16)` 全顯示成 UTC(差 8h);於 `db/session.py` 設連線 `timezone=Asia/Taipei`,讀回一律 +08 → API/報表/司機路單/geojson/前端顯示一次全對(計算用 `astimezone(TW)` 為瞬間保持、不受影響)。pytest +4。
 - **調度員 AI 助理 v1(唯讀)**:`assistant.py` — 對話式 + Claude **tool-use** 迴圈,4 個唯讀工具(`query_orders`/`dispatch_overview`/`vehicles_on_duty`/`demand_forecast`)以真實資料為依據回答調度問題並給建議(不直接寫入,排班仍用既有按鈕);`POST /dispatch/assistant`(無金鑰優雅降級回提示);前端「💬 AI 助理」對話頁(多輪上下文 + 查了哪些資料明細 + 範例問題)。pytest +6。
 - **AI 文件智慧匯入**:`doc_ingest.py`(輕量抽取 PDF=pypdf / Word=python-docx / Excel=openpyxl·xlrd / CSV·文字)→ Claude 抽結構化訂單(`ai_dispatch._call_claude` 加 `max_tokens`)→ 正規化建單 + 自動地理編碼;`POST /orders/import-doc`(無金鑰回 400);Orders 頁「🤖 AI 文件匯入」鈕 + 預覽表 + 錯誤明細。**刻意不引入 MarkItDown**(其 magika+onnxruntime 過重,違背精簡)。⚠️ 個資:文件原文會送 Claude,真實 PII 上線前應改地端抽取(列入正式部署合規)。pytest +5(extract_text/strip_json/coerce)。
 - **排班進階:ongoing 鎖定原車**:重排(`dispatcher.run_dispatch`)現納入進行中(`ongoing`)訂單,以**唯一技能**(`LOCK_SKILL_BASE+vid`)硬鎖在原指派車——實測 VROOM `steps` 非硬約束(會被重排/搬走),改用 skills 才能真鎖。ongoing 模型為 **delivery-only Job**(乘客已上車、初始載重佔位到下車,不重排上車);其車輛即使班表未涵蓋也強制納入;寫回保持 `status=ongoing`、更新 ETA 與路線。實測:下車點靠近他車仍鎖原車、pending 同時正常排入。(近似:車輛起點仍用設定起點,真實當前位置待司機端 GPS 回報。)

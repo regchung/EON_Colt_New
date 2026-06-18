@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import csv
 import io
-from datetime import date, datetime, time, timezone
+from datetime import date, datetime, time, timedelta, timezone
+
+TW = timezone(timedelta(hours=8))   # 車行「上車時間」為台灣本地時間,一律以 +08 儲存
 
 from openpyxl import load_workbook
 
@@ -60,7 +62,7 @@ def _parse_date(value) -> date:
 
 
 def _parse_time_to_dt(value, d: date) -> datetime:
-    """把上車時間(可能是 'HH:MM'、datetime、time)組成當日 datetime(UTC tz-aware)。"""
+    """把上車時間(可能是 'HH:MM'、datetime、time)組成當日 datetime(台灣 +08 tz-aware)。"""
     if isinstance(value, datetime):
         dt = value if value.date() != date(1900, 1, 1) else datetime.combine(d, value.time())
     elif isinstance(value, time):
@@ -70,7 +72,7 @@ def _parse_time_to_dt(value, d: date) -> datetime:
         t = datetime.strptime(s, "%H:%M").time() if ":" in s else time(0, 0)
         dt = datetime.combine(d, t)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=TW)
     return dt
 
 
