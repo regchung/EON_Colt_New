@@ -71,7 +71,7 @@ def _read_rows(filename: str, content: bytes) -> list[dict]:
 
 
 def _upsert_address(db: Session, addr: str | None, lng, lat, city, town,
-                    descs=(), stats=None):
+                    descs=(), stats=None, alias_seen=None):
     """把檔案提供的真實座標灌進地址簿,並把『描述名稱』(乘客地址補充/醫療設施名稱)
     當別名歸到同一門牌。
 
@@ -114,9 +114,13 @@ def _upsert_address(db: Session, addr: str | None, lng, lat, city, town,
             bump("points_updated")
 
     # 標準門牌字串本身 + 各描述名稱,皆作為別名歸到此門牌
+    # alias_seen:本批次(尚未 commit)已處理的別名;因 Session autoflush=False,
+    # db.get 看不到同批 pending 的新增,需用此 set 避免同址重複 INSERT 撞主鍵。
     for raw in (addr, *descs):
         raw = (raw or "").strip()
         if not raw:
+            continue
+        if alias_seen is not None and raw in alias_seen:
             continue
         alias = db.get(AddressAlias, raw)
         if alias is None:
@@ -125,6 +129,8 @@ def _upsert_address(db: Session, addr: str | None, lng, lat, city, town,
         elif alias.address_point_id != point.id:
             alias.address_point_id = point.id   # 描述指向不同/空門牌 → 更新
             bump("aliases_updated")
+        if alias_seen is not None:
+            alias_seen.add(raw)
 
 
 def import_history(db: Session, content: bytes, filename: str) -> dict:
@@ -135,6 +141,7 @@ def import_history(db: Session, content: bytes, filename: str) -> dict:
         "errors": [],
     }
     addr_stats: dict[str, int] = {}   # 地址簿:points_created/updated、aliases_created/updated
+    alias_seen: set[str] = set()      # 本批已處理別名(autoflush=False,避免同址重複 INSERT)
 
     veh_cache: dict[str, Vehicle] = {}
     drv_cache: dict[str, Driver] = {}
@@ -196,8 +203,8 @@ def import_history(db: Session, content: bytes, filename: str) -> dict:
             # 描述名稱:乘客地址補充 / 醫療設施名稱(歸到同一門牌的別名)
             p_descs = (_s(r.get("[上車]乘客地址補充")), _s(r.get("[上車]醫療設施名稱")))
             d_descs = (_s(r.get("[下車]乘客地址補充")), _s(r.get("[下車]醫療設施名稱")))
-            _upsert_address(db, pickup_addr, p_lng, p_lat, p_city, p_town, p_descs, addr_stats)
-            _upsert_address(db, dropoff_addr, d_lng, d_lat, d_city, d_town, d_descs, addr_stats)
+            _upsert_address(db, pickup_addr, p_lng, p_lat, p_city, p_town, p_descs, addr_stats, alias_seen)
+            _upsert_address(db, dropoff_addr, d_lng, d_lat, d_city, d_town, d_descs, addr_stats, alias_seen)
 
             # --- upsert 訂單(by source_order_no) ---
             order = db.scalar(select(Order).where(Order.source_order_no == son))
