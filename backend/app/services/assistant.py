@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 import httpx
@@ -25,12 +25,26 @@ from app.services import roster as roster_svc
 _API_URL = "https://api.anthropic.com/v1/messages"
 _HEADERS = {"anthropic-version": "2023-06-01", "content-type": "application/json"}
 _MAX_ROUNDS = 5   # tool-use 迴圈上限,避免無限往返
+TW = timezone(timedelta(hours=8))   # 台灣時區,系統一律 +08
+_WEEKDAYS = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"]
 
-_SYSTEM = (
+_SYSTEM_BASE = (
     "你是長照車隊的智慧調度助理。可用工具查詢真實營運資料(訂單、當日出勤車、統計、需求預測),"
     "請先查資料再回答,用繁體中文、條列、阿拉伯數字、簡潔專業。"
     "你只負責『查詢與建議』,不執行排班或指派;若需要排班,請建議使用者到對應頁面按『一鍵排班』。"
 )
+
+
+def _system_prompt() -> str:
+    """組合 system prompt,注入台灣當日日期 — 讓使用者省略年份(如『6/22』)時落在正確年份。"""
+    today = datetime.now(TW).date()
+    wd = _WEEKDAYS[today.weekday()]
+    return (
+        f"{_SYSTEM_BASE}"
+        f"今天是 {today.isoformat()}({wd},台灣時間)。"
+        f"使用者若只說月日(如『6/22』『下週一』)而未指明年份,一律解讀為今年({today.year})或之後最接近的該日期,"
+        f"切勿假設為過去年份。查詢工具的日期參數請填完整 YYYY-MM-DD。"
+    )
 
 # --- Claude tools 定義(唯讀)---
 TOOLS: list[dict] = [
@@ -103,7 +117,8 @@ def _t_dispatch_overview(db: Session, service_date: str) -> dict:
         Order.service_date == sd, Order.pickup_lng.is_not(None), Order.dropoff_lng.is_not(None))) or 0
     total = sum(by_status.values())
     on_duty = len(roster_svc.available_vehicles(db, sd))
-    return {"service_date": service_date, "total_orders": total, "by_status": by_status,
+    return {"service_date": service_date, "weekday": _WEEKDAYS[sd.weekday()],
+            "total_orders": total, "by_status": by_status,
             "geocoded": geocoded, "ungeocoded": total - geocoded, "vehicles_on_duty": on_duty}
 
 
@@ -162,7 +177,7 @@ def chat(db: Session, messages: list[dict]) -> dict:
         data = _post({
             "model": settings.AI_DISPATCH_MODEL,
             "max_tokens": 1500,
-            "system": _SYSTEM,
+            "system": _system_prompt(),
             "tools": TOOLS,
             "messages": convo,
         })
