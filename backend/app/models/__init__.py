@@ -7,9 +7,10 @@ from app.models.user import User
 from app.models.dispatch_history import DispatchHistory
 from app.models.dispatch_comparison import DispatchComparison
 from app.models.unassigned_record import UnassignedRecord
+from app.models.push_subscription import PushSubscription
 
 __all__ = [
     "Vehicle", "Driver", "Order", "AddressPoint", "AddressAlias",
     "RouteStop", "User", "DispatchHistory", "DispatchComparison",
-    "UnassignedRecord",
+    "UnassignedRecord", "PushSubscription",
 ]

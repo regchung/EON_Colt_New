@@ -109,3 +109,38 @@ def test_assistant_no_key_returns_notice():
                     headers=_admin_headers())
     assert r.status_code == 200
     assert "reply" in r.json() and "tool_trace" in r.json()
+
+
+# ---------- Web Push(VAPID)----------
+def test_push_public_key_requires_auth():
+    assert client.get("/api/push/public-key").status_code == 401
+
+
+def test_push_public_key_shape():
+    r = client.get("/api/push/public-key", headers=_admin_headers())
+    assert r.status_code == 200
+    body = r.json()
+    assert "public_key" in body and "enabled" in body
+
+
+def test_push_subscribe_unsubscribe_lifecycle():
+    h = _admin_headers()
+    sub = {
+        "endpoint": "https://example.test/push/UNIT-TEST-ENDPOINT",
+        "keys": {"p256dh": "BTestPublicKeyMaterial", "auth": "TestAuthSecret"},
+    }
+    try:
+        r = client.post("/api/push/subscribe", json={"subscription": sub}, headers=h)
+        assert r.status_code == 200 and r.json()["ok"] is True
+        # 重複訂閱應為 upsert(不報錯)
+        r2 = client.post("/api/push/subscribe", json={"subscription": sub}, headers=h)
+        assert r2.status_code == 200
+    finally:
+        r3 = client.post("/api/push/unsubscribe", json={"endpoint": sub["endpoint"]}, headers=h)
+        assert r3.status_code == 200 and r3.json()["removed"] >= 1
+
+
+def test_push_subscribe_rejects_empty_endpoint():
+    r = client.post("/api/push/subscribe",
+                    json={"subscription": {"keys": {}}}, headers=_admin_headers())
+    assert r.status_code == 400

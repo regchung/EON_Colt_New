@@ -14,4 +14,6 @@ def get_config() -> dict:
         "map8_key": settings.MAP8_API_KEY,
         "map8_style": MAP8_STYLE,
         "has_map": bool(settings.MAP8_API_KEY),
+        "vapid_public_key": settings.VAPID_PUBLIC_KEY,
+        "push_enabled": settings.push_enabled,
     }
