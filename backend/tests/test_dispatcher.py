@@ -170,3 +170,62 @@ def test_run_dispatch_welfare_order_requires_welfare_vehicle(haversine):
     finally:
         _cleanup(db)
         db.close()
+
+
+def test_run_dispatch_out_of_service_hours(haversine):
+    """時段外(凌晨 03:00)訂單不予排入 → out_of_service 計數,且不會變 scheduled。
+
+    環境無關:時段判斷只看訂單時間(06–18 外),與有哪些車無關。
+    """
+    db = SessionLocal()
+    try:
+        _cleanup(db)
+        v = Vehicle(plate="TEST-V1", type="normal", seats=4, active=True,
+                    depot_lng=121.53, depot_lat=25.04, start_lng=121.53, start_lat=25.04,
+                    end_lng=121.53, end_lat=25.04)
+        db.add(v)
+        db.flush()
+        db.add(ShiftException(vehicle_id=v.id, ex_date=TEST_DATE, available=True))
+        db.add(Order(
+            source_order_no="TEST-DISP-OOH", service_date=TEST_DATE, pickup_time=_dt(3),
+            pickup_window_min=30, passenger_name="凌晨客",
+            pickup_address="測試上車", dropoff_address="測試下車",
+            pickup_lng=121.54, pickup_lat=25.045, dropoff_lng=121.56, dropoff_lat=25.05,
+            pax=1, vehicle_type="normal", allow_pool=False, status="imported"))
+        db.commit()
+        res = dispatcher.run_dispatch(db, TEST_DATE)
+        # 該日唯一訂單在時段外 → 整批無可排訂單(回錯)或 out_of_service≥1
+        if "error" not in res:
+            assert res["out_of_service"] >= 1
+        db.expire_all()
+        o = db.query(Order).filter(Order.source_order_no == "TEST-DISP-OOH").one()
+        assert o.status != "scheduled", "時段外訂單不應被排入"
+    finally:
+        _cleanup(db)
+        db.close()
+
+
+def test_run_dispatch_over_capacity_unassigned(haversine):
+    """超容量訂單(pax=50,超過任何車輛座位)→ 無法排入,維持 imported。
+
+    環境無關:50 人超過任何真實車輛座位,必排不進去。
+    """
+    db = SessionLocal()
+    try:
+        _cleanup(db)
+        _seed(db)   # 兩台 4 座車出勤 + 兩張正常單
+        db.add(Order(
+            source_order_no="TEST-DISP-BIG", service_date=TEST_DATE, pickup_time=_dt(10),
+            pickup_window_min=30, passenger_name="大團",
+            pickup_address="測試上車大", dropoff_address="測試下車大",
+            pickup_lng=121.54, pickup_lat=25.045, dropoff_lng=121.56, dropoff_lat=25.05,
+            pax=50, vehicle_type="normal", allow_pool=False, status="imported"))
+        db.commit()
+        res = dispatcher.run_dispatch(db, TEST_DATE)
+        assert "error" not in res, res
+        db.expire_all()
+        big = db.query(Order).filter(Order.source_order_no == "TEST-DISP-BIG").one()
+        assert big.status != "scheduled", "超座位訂單不應被排入"
+    finally:
+        _cleanup(db)
+        db.close()

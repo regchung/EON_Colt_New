@@ -204,6 +204,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         problem.add_vehicle(vroom.Vehicle(**kwargs))
 
     out_of_service = 0
+    tasks_added = 0
     for o in orders:
         p_idx, d_idx = ord_pts[o.id]
         pw_start, pw_end = _pickup_window(o)
@@ -230,6 +231,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             skills=sk,
             priority=80 if o.id in fixed_pins else 50,   # 固定行程優先排入
         )
+        tasks_added += 1
 
     # 進行中訂單:delivery-only job,以專屬技能硬鎖原車(乘客已在車上,初始載重佔位到下車)
     for o in ongoing:
@@ -245,6 +247,17 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             default_service=prm["teardown_sec"],
             priority=100,  # 已在車上,務必完成下車
         ))
+        tasks_added += 1
+
+    # 過濾後無任何可排任務(例:當日訂單全在服務時段外)→ 優雅回覆,勿讓 VROOM 崩潰
+    if tasks_added == 0:
+        return {
+            "service_date": service_date.isoformat(),
+            "error": "該日無可排入的任務(訂單可能全在服務時段外或已完成)。",
+            "orders_total": len(orders), "assigned": 0,
+            "out_of_service": out_of_service,
+            "skipped_no_coords": [o.id for o in skipped],
+        }
 
     sol = problem.solve(exploration_level=5, nb_threads=4)
 
