@@ -623,18 +623,69 @@ def daily_tasks_meta(db: Session = Depends(get_db)):
             "max_date": mx.isoformat() if mx else None, "fleets": fleets}
 
 
-def _daily_tasks_plan(db: Session, service_date: date, fleet: str | None, plate: str | None):
-    """口卡(系統派遣版):從 orders.assigned_vehicle_id 建同結構;司機以車對應解出。"""
-    # 車 → 司機(Driver.vehicle_id 為底,當日 DriverVehicleAssignment 覆寫)
-    drv_by_veh: dict[int, tuple] = {}
+def _plan_drv_by_veh(db: Session, service_date: date) -> dict:
+    """車 → (司機名, 電話);Driver.vehicle_id 為底,當日 DriverVehicleAssignment 覆寫。"""
+    out: dict[int, tuple] = {}
     for d in db.scalars(select(Driver).where(Driver.vehicle_id.is_not(None))).all():
-        drv_by_veh.setdefault(d.vehicle_id, (d.name, d.phone))
+        out.setdefault(d.vehicle_id, (d.name, d.phone))
     for a in db.scalars(select(DriverVehicleAssignment).where(
             DriverVehicleAssignment.service_date == service_date)).all():
         dn = db.get(Driver, a.driver_id)
         if dn:
-            drv_by_veh[a.vehicle_id] = (dn.name, dn.phone)
+            out[a.vehicle_id] = (dn.name, dn.phone)
+    return out
 
+
+def _plan_order_task(o: Order) -> dict:
+    return {
+        "time": o.pickup_time.strftime("%H:%M") if o.pickup_time else "--:--",
+        "passenger": o.passenger_name, "phone": o.passenger_phone,
+        "pickup": o.pickup_address, "dropoff": o.dropoff_address,
+        "pickup_town": None, "dropoff_town": None,
+        "pax": o.pax or 1, "wheelchair": 1 if o.need_wheelchair else 0,
+        "welfare": o.vehicle_type == "welfare" or bool(o.need_wheelchair),
+        "est_min": None, "order_no": o.source_order_no, "status": o.status,
+    }
+
+
+def _plan_cards_response(grouped: dict, service_date: date, fleet, plate, total_tasks, source):
+    fleets_out = []
+    for fl, vehs in sorted(grouped.items()):
+        vlist = []
+        for pl in sorted(vehs):
+            v = vehs[pl]
+            v["tasks"].sort(key=lambda t: t["time"])
+            v["task_count"] = len(v["tasks"])
+            v["first"] = v["tasks"][0]["time"] if v["tasks"] else "--:--"
+            v["last"] = v["tasks"][-1]["time"] if v["tasks"] else "--:--"
+            vlist.append(v)
+        fleets_out.append({"fleet": fl, "vehicles": vlist, "vehicle_count": len(vlist),
+                           "task_count": sum(v["task_count"] for v in vlist)})
+    return {
+        "service_date": service_date.isoformat(), "fleet": fleet, "plate": plate, "source": source,
+        "total_vehicles": sum(f["vehicle_count"] for f in fleets_out),
+        "total_tasks": total_tasks,
+        "fleets": fleets_out,
+    }
+
+
+def _daily_tasks_plan(db: Session, service_date: date, fleet: str | None, plate: str | None):
+    """口卡(系統派遣版)。
+
+    - 即時(未來日已跑過排班):有 scheduled/ongoing 訂單 → 讀 orders.assigned_vehicle_id。
+    - 歷史日(全為 done):用 VROOM 即時算「系統最佳化後」的每車每趟(read-only,不寫入)。
+    """
+    live = db.scalar(select(func.count()).select_from(Order).where(
+        Order.service_date == service_date,
+        Order.status.in_(["scheduled", "ongoing"]),
+        Order.assigned_vehicle_id.is_not(None))) or 0
+    if live:
+        return _plan_from_assigned(db, service_date, fleet, plate)
+    return _plan_from_compute(db, service_date, fleet, plate)
+
+
+def _plan_from_assigned(db: Session, service_date: date, fleet: str | None, plate: str | None):
+    drv = _plan_drv_by_veh(db, service_date)
     q = select(Order).where(
         Order.service_date == service_date,
         Order.assigned_vehicle_id.is_not(None),
@@ -643,52 +694,58 @@ def _daily_tasks_plan(db: Session, service_date: date, fleet: str | None, plate:
     if fleet:
         q = q.where(Order.fleet == fleet)
     orders = list(db.scalars(q.order_by(Order.assigned_vehicle_id, Order.pickup_time)).all())
-
     veh_ids = {o.assigned_vehicle_id for o in orders}
     vmap = {v.id: v for v in db.scalars(select(Vehicle).where(Vehicle.id.in_(veh_ids))).all()} if veh_ids else {}
     if plate:
         keep = {vid for vid, v in vmap.items() if v.plate == plate}
         orders = [o for o in orders if o.assigned_vehicle_id in keep]
-
-    def _task(o):
-        return {
-            "time": o.pickup_time.strftime("%H:%M") if o.pickup_time else "--:--",
-            "passenger": o.passenger_name, "phone": o.passenger_phone,
-            "pickup": o.pickup_address, "dropoff": o.dropoff_address,
-            "pickup_town": None, "dropoff_town": None,
-            "pax": o.pax or 1, "wheelchair": 1 if o.need_wheelchair else 0,
-            "welfare": o.vehicle_type == "welfare" or bool(o.need_wheelchair),
-            "est_min": None, "order_no": o.source_order_no, "status": o.status,
-        }
-
     grouped: dict[str, dict[str, dict]] = {}
     for o in orders:
         v = vmap.get(o.assigned_vehicle_id)
         plate_str = v.plate if v else f"#{o.assigned_vehicle_id}"
         fl = o.fleet or (v.home_fleet if v else None) or "(未標車行)"
-        name, phone = drv_by_veh.get(o.assigned_vehicle_id, (None, None))
-        veh = grouped.setdefault(fl, {}).setdefault(
-            plate_str, {"plate": plate_str, "driver": name, "driver_phone": phone, "tasks": []})
-        veh["tasks"].append(_task(o))
+        name, phone = drv.get(o.assigned_vehicle_id, (None, None))
+        grouped.setdefault(fl, {}).setdefault(
+            plate_str, {"plate": plate_str, "driver": name, "driver_phone": phone, "tasks": []}
+        )["tasks"].append(_plan_order_task(o))
+    return _plan_cards_response(grouped, service_date, fleet, plate, len(orders), "plan")
 
-    fleets_out = []
-    for fl, vehs in sorted(grouped.items()):
-        vlist = []
-        for pl in sorted(vehs):
-            v = vehs[pl]
-            v["task_count"] = len(v["tasks"])
-            v["first"] = v["tasks"][0]["time"]
-            v["last"] = v["tasks"][-1]["time"]
-            vlist.append(v)
-        fleets_out.append({"fleet": fl, "vehicles": vlist, "vehicle_count": len(vlist),
-                           "task_count": sum(v["task_count"] for v in vlist)})
 
-    return {
-        "service_date": service_date.isoformat(), "fleet": fleet, "plate": plate, "source": "plan",
-        "total_vehicles": sum(f["vehicle_count"] for f in fleets_out),
-        "total_tasks": len(orders),
-        "fleets": fleets_out,
-    }
+def _plan_from_compute(db: Session, service_date: date, fleet: str | None, plate: str | None):
+    """歷史日:對每個車行用 VROOM 算系統最佳化派遣,組成口卡(read-only)。"""
+    drv = _plan_drv_by_veh(db, service_date)
+    if fleet:
+        fleets = [fleet]
+    else:
+        fleets = [f for (f,) in db.execute(select(Order.fleet.distinct()).where(
+            Order.service_date == service_date, Order.status == "done")).all() if f]
+
+    plan_by_fleet: dict[str, dict] = {}   # fl -> {vid: [oid,...]}
+    all_oids: list[int] = []
+    for fl in fleets:
+        r = comparison.compare_day(db, fl, service_date, return_plan=True)
+        if r and r.get("plan"):
+            plan_by_fleet[fl] = r["plan"]
+            for oids in r["plan"].values():
+                all_oids += oids
+    omap = {o.id: o for o in db.scalars(select(Order).where(Order.id.in_(all_oids))).all()} if all_oids else {}
+    vids = {vid for p in plan_by_fleet.values() for vid in p}
+    vmap = {v.id: v for v in db.scalars(select(Vehicle).where(Vehicle.id.in_(vids))).all()} if vids else {}
+
+    grouped: dict[str, dict[str, dict]] = {}
+    total = 0
+    for fl, plan in plan_by_fleet.items():
+        for vid, oids in plan.items():
+            v = vmap.get(vid)
+            plate_str = v.plate if v else f"#{vid}"
+            if plate and plate_str != plate:
+                continue
+            name, phone = drv.get(vid, (None, None))
+            tasks = [_plan_order_task(omap[oid]) for oid in oids if oid in omap]
+            total += len(tasks)
+            grouped.setdefault(fl, {})[plate_str] = {
+                "plate": plate_str, "driver": name, "driver_phone": phone, "tasks": tasks}
+    return _plan_cards_response(grouped, service_date, fleet, plate, total, "plan-compute")
 
 
 @router.get("/daily-tasks")

@@ -44,8 +44,13 @@ def _secs_tw(dt) -> int:
     return local.hour * 3600 + local.minute * 60 + local.second
 
 
-def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 30) -> dict | None:
-    """回傳對比指標 dict;當日無成行單或無車則回 None。"""
+def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 30,
+                return_plan: bool = False) -> dict | None:
+    """回傳對比指標 dict;當日無成行單或無車則回 None。
+
+    return_plan=True 時額外回傳 plan={vehicle_id: [order_id,...](依路線順序)},
+    供「系統派遣口卡」呈現系統最佳化後每車每趟(批次不傳此旗標,零額外負擔)。
+    """
     orders = list(db.scalars(
         select(Order).where(
             Order.fleet == fleet, Order.service_date == service_date,
@@ -169,6 +174,13 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
                DispatchHistory.status == SERVED)
     ).one()
 
+    plan = None
+    if return_plan and len(df):
+        plan = {}
+        for _, step in df.iterrows():
+            if step["type"] == "pickup":
+                plan.setdefault(int(step["vehicle_id"]), []).append(int(step["id"]))
+
     return {
         "fleet": fleet, "service_date": service_date, "window_min": window_min,
         "n_orders": len(orders),
@@ -179,6 +191,7 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
         "human_distance_m": float(hd[0]), "human_minutes": float(hd[1]),
         "vroom_drive_sec": drive_sec,
         "unassigned_detail": unassigned_detail,
+        "plan": plan,
     }
 
 

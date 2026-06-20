@@ -41,7 +41,7 @@ function printCards() { window.print() }
 <template>
   <p class="text-muted small no-print">
     每日各車輛任務口卡:依車行 → 每台車(司機)→ 依上車時間由早到晚排列。可依日期 / 車行 / 車牌過濾,並可列印給司機。
-    <br><b>資料來源</b>:「人工歷史」=過去成行紀錄;「系統派遣」=系統當前指派(含未來自動排班日)。
+    <br><b>資料來源</b>:「人工歷史」=過去實際成行紀錄;「系統派遣」=未來已排班日為系統實際指派、歷史日為系統最佳化試算(VROOM 重算,車通常更少)。
   </p>
 
   <!-- 過濾列 -->
@@ -67,6 +67,10 @@ function printCards() { window.print() }
     <button class="btn btn-sm btn-primary" :disabled="loading" @click="load">{{ loading ? '查詢中…' : '查詢' }}</button>
     <button class="btn btn-sm btn-outline-secondary" :disabled="!data || !data.total_tasks" @click="printCards">🖨 列印口卡</button>
     <span v-if="data" class="ms-auto small text-muted">
+      <span v-if="source === 'plan'" class="badge me-1"
+            :class="data.source === 'plan-compute' ? 'bg-info text-dark' : 'bg-success'">
+        {{ data.source === 'plan-compute' ? '系統最佳化試算' : '系統實際指派' }}
+      </span>
       {{ data.service_date }}　出勤 <b>{{ data.total_vehicles }}</b> 車 ·
       任務 <b>{{ data.total_tasks }}</b> 趟
     </span>
