@@ -9,6 +9,21 @@ async function runMatch() {
   const { data } = await client.get('/fixed-routes/match', { params: { service_date: matchDate.value } })
   match.value = data
 }
+
+// 固定行程健檢:既定骨架 + 衝突偵測 + 空檔
+const blocks = ref(null)
+const blocksLoading = ref(false)
+async function runBlocks() {
+  blocksLoading.value = true
+  try {
+    const { data } = await client.get('/fixed-routes/blocks', { params: { service_date: matchDate.value } })
+    blocks.value = data
+  } catch (e) {
+    error.value = e.response?.data?.detail || '健檢失敗'
+  } finally {
+    blocksLoading.value = false
+  }
+}
 const error = ref('')
 const toast = ref('')
 const TIME_SLOTS = ['全天', '早', '午', '午後', '早晚']
@@ -122,6 +137,63 @@ async function del(r) {
               <td class="text-muted">{{ it.pickup }} → {{ it.dropoff }}</td>
             </tr>
             <tr v-if="!match.items.length"><td colspan="6" class="text-center text-muted py-2">該日無符合固定行程的訂單</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div></div>
+
+  <!-- 固定行程健檢:衝突偵測 + 空檔 -->
+  <div class="card shadow-sm mb-3 border-warning"><div class="card-body">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+      <span class="fw-semibold">🩺 固定行程健檢(同司機衝突 + 可接單空檔)</span>
+      <input v-model="matchDate" type="date" class="form-control form-control-sm" style="width:160px" />
+      <button class="btn btn-sm btn-warning" :disabled="blocksLoading" @click="runBlocks">
+        {{ blocksLoading ? '檢查中…' : '健檢' }}
+      </button>
+      <span class="small text-muted">把固定行程當既定骨架,標出單一司機被排重疊/銜接不及的衝突。</span>
+    </div>
+
+    <div v-if="blocks">
+      <!-- 摘要 -->
+      <div class="d-flex flex-wrap gap-2 mb-2">
+        <span class="badge bg-secondary">固定趟 {{ blocks.summary.fixed_trips }}</span>
+        <span class="badge bg-secondary">指定司機 {{ blocks.summary.drivers }}</span>
+        <span class="badge" :class="blocks.summary.conflict_count ? 'bg-danger' : 'bg-success'">
+          衝突 {{ blocks.summary.conflict_count }} 件 / {{ blocks.summary.conflicted_drivers }} 司機
+        </span>
+        <span class="badge bg-info text-dark">可接單空檔 ≈ {{ blocks.summary.idle_vehicle_hours }} 車·時</span>
+      </div>
+
+      <!-- 衝突清單 -->
+      <div v-if="blocks.conflicts.length" class="mb-2">
+        <div v-for="(c, i) in blocks.conflicts" :key="i"
+             class="border rounded px-2 py-1 mb-1 small"
+             :class="c.poolable_hint ? 'border-primary bg-light' : 'border-danger bg-light'">
+          <span class="badge me-1" :class="c.poolable_hint ? 'bg-primary' : 'bg-danger'">
+            {{ c.poolable_hint ? '🔁 可共乘' : '⚠️ 需備援' }}
+          </span>
+          <span class="fw-semibold">{{ c.plate }}</span>
+          <span class="text-muted">｜{{ c.a }} @{{ c.a_time }} ↔ {{ c.b }} @{{ c.b_time }}</span>
+          <span class="d-block text-muted ms-1">{{ c.note }}</span>
+        </div>
+      </div>
+      <div v-else class="alert alert-success py-2 small mb-2">✓ 無衝突,固定行程骨架可順利執行。</div>
+
+      <!-- 有衝突的司機骨架 -->
+      <div class="table-responsive" v-if="blocks.drivers.some(d => d.has_conflict)">
+        <table class="table table-sm align-middle small mb-0">
+          <thead class="table-light"><tr><th>車</th><th>趟數</th><th>首/末</th><th>空檔(時)</th><th>當日骨架</th></tr></thead>
+          <tbody>
+            <tr v-for="d in blocks.drivers.filter(x => x.has_conflict)" :key="d.vehicle_id">
+              <td class="text-nowrap"><span class="badge bg-danger">{{ d.plate }}</span></td>
+              <td>{{ d.trips }}</td>
+              <td class="text-nowrap">{{ d.first }}–{{ d.last }}</td>
+              <td>{{ d.idle_hours }}</td>
+              <td class="text-muted">
+                <span v-for="(b, j) in d.blocks" :key="j" class="me-2">{{ b.time }} {{ b.label }}({{ b.pax }}人)</span>
+              </td>
+            </tr>
           </tbody>
         </table>
       </div>
