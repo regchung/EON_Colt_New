@@ -132,22 +132,41 @@ def test_run_dispatch_no_coded_orders(haversine):
         db.close()
 
 
-def test_run_dispatch_welfare_constraint(haversine):
-    """福祉訂單(輪椅)只有福祉車能服務:若排入,指派車必為 welfare 車種。
+def test_run_dispatch_welfare_order_requires_welfare_vehicle(haversine):
+    """強制版:單一福祉(輪椅)單 + 有福祉車可用 → 必排入,且指派車必為 welfare 車種。
 
-    (環境無關:不綁特定車 id,改驗指派到的車是 welfare —— 本機有真實福祉車亦成立。)
+    只放一張福祉單(無其他單競爭)以確保「可排」;再驗車種約束被滿足。
+    環境無關:不綁特定車 id,只驗指派車種(本機有真實福祉車亦成立)。
     """
     db = SessionLocal()
     try:
         _cleanup(db)
-        _seed(db, welfare_order=True, welfare_vehicle=True)
+        # 普通車 + 福祉車各一(出勤),只放一張福祉單
+        v1 = Vehicle(plate="TEST-V1", type="normal", seats=4, active=True,
+                     depot_lng=121.53, depot_lat=25.04, start_lng=121.53, start_lat=25.04,
+                     end_lng=121.53, end_lat=25.04)
+        v2 = Vehicle(plate="TEST-V2", type="welfare", seats=4, active=True,
+                     depot_lng=121.55, depot_lat=25.05, start_lng=121.55, start_lat=25.05,
+                     end_lng=121.55, end_lat=25.05)
+        db.add_all([v1, v2])
+        db.flush()
+        db.add_all([ShiftException(vehicle_id=v1.id, ex_date=TEST_DATE, available=True),
+                    ShiftException(vehicle_id=v2.id, ex_date=TEST_DATE, available=True)])
+        db.add(Order(
+            source_order_no="TEST-DISP-W", service_date=TEST_DATE, pickup_time=_dt(9),
+            pickup_window_min=30, passenger_name="輪椅客",
+            pickup_address="測試上車W", dropoff_address="測試下車W",
+            pickup_lng=121.54, pickup_lat=25.045, dropoff_lng=121.56, dropoff_lat=25.05,
+            pax=1, vehicle_type="welfare", need_wheelchair=True, allow_pool=False, status="imported"))
+        db.commit()
+
         res = dispatcher.run_dispatch(db, TEST_DATE)
         assert "error" not in res, res
         db.expire_all()
-        wf = db.query(Order).filter(Order.source_order_no == "TEST-DISP-0").one()
-        if wf.status == "scheduled":
-            v = db.get(Vehicle, wf.assigned_vehicle_id)
-            assert v.type == "welfare", "福祉訂單被指派到非福祉車"
+        wf = db.query(Order).filter(Order.source_order_no == "TEST-DISP-W").one()
+        assert wf.status == "scheduled", "有福祉車可用,福祉單卻未排入"
+        v = db.get(Vehicle, wf.assigned_vehicle_id)
+        assert v.type == "welfare", "福祉訂單被指派到非福祉車"
     finally:
         _cleanup(db)
         db.close()
