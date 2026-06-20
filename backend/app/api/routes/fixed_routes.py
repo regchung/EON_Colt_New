@@ -55,6 +55,14 @@ def match_preview(service_date: date, db: Session = Depends(get_db),
     return fixed_route_match.match_for_date(db, service_date)
 
 
+@router.get("/blocks")
+def blocks_preview(service_date: date, db: Session = Depends(get_db),
+                   _: User = Depends(require_dispatcher)):
+    """固定行程既定骨架 + 衝突偵測(同司機時間重疊/銜接不及)+ 可接單空檔。"""
+    from app.services import fixed_route_blocks
+    return fixed_route_blocks.analyze(db, service_date)
+
+
 @router.post("", response_model=FixedRouteOut, status_code=201)
 def create_route(body: FixedRouteCreate, db: Session = Depends(get_db),
                  _: User = Depends(require_dispatcher)):

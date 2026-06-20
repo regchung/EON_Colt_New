@@ -144,3 +144,17 @@ def test_push_subscribe_rejects_empty_endpoint():
     r = client.post("/api/push/subscribe",
                     json={"subscription": {"keys": {}}}, headers=_admin_headers())
     assert r.status_code == 400
+
+
+# ---------- 固定行程骨架 / 衝突偵測 ----------
+def test_fixed_blocks_requires_auth():
+    assert client.get("/api/fixed-routes/blocks?service_date=2026-06-22").status_code == 401
+
+
+def test_fixed_blocks_shape():
+    # 乾淨 DB(無固定行程/訂單)應回 200 + 空結構,不依賴特定資料
+    r = client.get("/api/fixed-routes/blocks?service_date=2026-06-22", headers=_admin_headers())
+    assert r.status_code == 200
+    body = r.json()
+    assert {"service_date", "drivers", "conflicts", "summary"} <= set(body)
+    assert {"fixed_trips", "drivers", "conflict_count"} <= set(body["summary"])
