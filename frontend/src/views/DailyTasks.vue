@@ -6,6 +6,7 @@ const meta = ref({ fleets: [], min_date: null, max_date: null })
 const date = ref('')
 const fleet = ref('')
 const plate = ref('')
+const source = ref('history')   // history=人工歷史 / plan=系統派遣
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
@@ -21,7 +22,7 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const params = { service_date: date.value }
+    const params = { service_date: date.value, source: source.value }
     if (fleet.value) params.fleet = fleet.value
     if (plate.value.trim()) params.plate = plate.value.trim()
     const { data: d } = await client.get('/dispatch/daily-tasks', { params })
@@ -39,13 +40,21 @@ function printCards() { window.print() }
 
 <template>
   <p class="text-muted small no-print">
-    每日各車輛任務口卡:依車行 → 每台車 → 依上車時間由早到晚排列。可依日期 / 車行 / 車牌過濾,並可列印給司機。
+    每日各車輛任務口卡:依車行 → 每台車(司機)→ 依上車時間由早到晚排列。可依日期 / 車行 / 車牌過濾,並可列印給司機。
+    <br><b>資料來源</b>:「人工歷史」=過去成行紀錄;「系統派遣」=系統當前指派(含未來自動排班日)。
   </p>
 
   <!-- 過濾列 -->
   <div class="card shadow-sm mb-3 no-print"><div class="card-body d-flex flex-wrap align-items-end gap-2">
+    <div><label class="form-label mb-0 small">資料來源</label>
+      <select v-model="source" class="form-select form-select-sm" style="width:130px" @change="load">
+        <option value="history">人工歷史</option>
+        <option value="plan">系統派遣</option>
+      </select></div>
     <div><label class="form-label mb-0 small">日期</label>
-      <input v-model="date" type="date" :min="meta.min_date" :max="meta.max_date"
+      <input v-model="date" type="date"
+             :min="source === 'history' ? meta.min_date : null"
+             :max="source === 'history' ? meta.max_date : null"
              class="form-control form-control-sm" style="width:160px" /></div>
     <div><label class="form-label mb-0 small">車行</label>
       <select v-model="fleet" class="form-select form-select-sm" style="width:140px">
@@ -67,7 +76,8 @@ function printCards() { window.print() }
 
   <!-- 列印標題(僅列印時顯示) -->
   <div v-if="data" class="print-only mb-2">
-    <h5 class="mb-0">每日車輛任務口卡　{{ data.service_date }}<span v-if="fleet"> · {{ fleet }}</span></h5>
+    <h5 class="mb-0">每日車輛任務口卡　{{ data.service_date }}<span v-if="fleet"> · {{ fleet }}</span>
+      <span class="small text-muted">（{{ source === 'plan' ? '系統派遣' : '人工歷史' }}）</span></h5>
   </div>
 
   <template v-if="data">

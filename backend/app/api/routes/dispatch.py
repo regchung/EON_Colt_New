@@ -11,11 +11,14 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.dispatch_comparison import DispatchComparison
 from app.models.dispatch_history import DispatchHistory
+from app.models.driver import Driver
+from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.order import Order
 from app.models.pool_projection import PoolProjection
 from app.models.route import RouteStop
 from app.models.unassigned_record import UnassignedRecord
 from app.models.user import User
+from app.models.vehicle import Vehicle
 from app.services import (
     ai_dispatch, assistant, comparison, dispatcher, driver_affinity, forecast, matrix, osrm,
     pool_suggest, recurring_pairs, zone_affinity,
@@ -620,14 +623,86 @@ def daily_tasks_meta(db: Session = Depends(get_db)):
             "max_date": mx.isoformat() if mx else None, "fleets": fleets}
 
 
+def _daily_tasks_plan(db: Session, service_date: date, fleet: str | None, plate: str | None):
+    """口卡(系統派遣版):從 orders.assigned_vehicle_id 建同結構;司機以車對應解出。"""
+    # 車 → 司機(Driver.vehicle_id 為底,當日 DriverVehicleAssignment 覆寫)
+    drv_by_veh: dict[int, tuple] = {}
+    for d in db.scalars(select(Driver).where(Driver.vehicle_id.is_not(None))).all():
+        drv_by_veh.setdefault(d.vehicle_id, (d.name, d.phone))
+    for a in db.scalars(select(DriverVehicleAssignment).where(
+            DriverVehicleAssignment.service_date == service_date)).all():
+        dn = db.get(Driver, a.driver_id)
+        if dn:
+            drv_by_veh[a.vehicle_id] = (dn.name, dn.phone)
+
+    q = select(Order).where(
+        Order.service_date == service_date,
+        Order.assigned_vehicle_id.is_not(None),
+        Order.status.in_(["scheduled", "ongoing", "done"]),
+    )
+    if fleet:
+        q = q.where(Order.fleet == fleet)
+    orders = list(db.scalars(q.order_by(Order.assigned_vehicle_id, Order.pickup_time)).all())
+
+    veh_ids = {o.assigned_vehicle_id for o in orders}
+    vmap = {v.id: v for v in db.scalars(select(Vehicle).where(Vehicle.id.in_(veh_ids))).all()} if veh_ids else {}
+    if plate:
+        keep = {vid for vid, v in vmap.items() if v.plate == plate}
+        orders = [o for o in orders if o.assigned_vehicle_id in keep]
+
+    def _task(o):
+        return {
+            "time": o.pickup_time.strftime("%H:%M") if o.pickup_time else "--:--",
+            "passenger": o.passenger_name, "phone": o.passenger_phone,
+            "pickup": o.pickup_address, "dropoff": o.dropoff_address,
+            "pickup_town": None, "dropoff_town": None,
+            "pax": o.pax or 1, "wheelchair": 1 if o.need_wheelchair else 0,
+            "welfare": o.vehicle_type == "welfare" or bool(o.need_wheelchair),
+            "est_min": None, "order_no": o.source_order_no, "status": o.status,
+        }
+
+    grouped: dict[str, dict[str, dict]] = {}
+    for o in orders:
+        v = vmap.get(o.assigned_vehicle_id)
+        plate_str = v.plate if v else f"#{o.assigned_vehicle_id}"
+        fl = o.fleet or (v.home_fleet if v else None) or "(未標車行)"
+        name, phone = drv_by_veh.get(o.assigned_vehicle_id, (None, None))
+        veh = grouped.setdefault(fl, {}).setdefault(
+            plate_str, {"plate": plate_str, "driver": name, "driver_phone": phone, "tasks": []})
+        veh["tasks"].append(_task(o))
+
+    fleets_out = []
+    for fl, vehs in sorted(grouped.items()):
+        vlist = []
+        for pl in sorted(vehs):
+            v = vehs[pl]
+            v["task_count"] = len(v["tasks"])
+            v["first"] = v["tasks"][0]["time"]
+            v["last"] = v["tasks"][-1]["time"]
+            vlist.append(v)
+        fleets_out.append({"fleet": fl, "vehicles": vlist, "vehicle_count": len(vlist),
+                           "task_count": sum(v["task_count"] for v in vlist)})
+
+    return {
+        "service_date": service_date.isoformat(), "fleet": fleet, "plate": plate, "source": "plan",
+        "total_vehicles": sum(f["vehicle_count"] for f in fleets_out),
+        "total_tasks": len(orders),
+        "fleets": fleets_out,
+    }
+
+
 @router.get("/daily-tasks")
 def daily_tasks(service_date: date, fleet: str | None = None, plate: str | None = None,
-                db: Session = Depends(get_db)):
+                source: str = "history", db: Session = Depends(get_db)):
     """每日車輛任務清單(口卡):依車行 → 每台車 → 依上車時間排序的任務。
 
-    資料源為人工派遣紀錄(dispatch_history,僅成行);乘客姓名/電話由 source_order_no 關聯訂單。
-    可依日期(必填)、車行、車牌過濾。
+    source:
+      - history(預設):人工派遣紀錄(dispatch_history,僅成行)。
+      - plan:系統當前指派(orders.assigned_vehicle_id;含未來自動排班日)。
+    乘客姓名/電話由訂單關聯。可依日期(必填)、車行、車牌過濾。
     """
+    if source == "plan":
+        return _daily_tasks_plan(db, service_date, fleet, plate)
     q = (
         select(DispatchHistory)
         .where(DispatchHistory.service_date == service_date,
