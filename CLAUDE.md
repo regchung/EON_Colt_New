@@ -127,6 +127,10 @@ vehicles 新增 `start_lng/lat`·`end_lng/lat`;orders 新增 `pool_consent_at`/`
    `pool_suggest`/`comparison`/`dispatcher`(含 ongoing 鎖定)求解測試待補——需 CI 內備 OSRM 矩陣(目前 CI 無 OSRM,故僅測純函式)。
 6. **正式部署**:改 `SECRET_KEY` 與管理員密碼、HTTPS/反向代理、各環境獨立 `.env`、多租戶隔離、個資合規
    (含 AI 文件匯入個資外送 → 評估地端抽取)。
+7. **🟡 待決策議題(經營取捨)**:見 `docs/open-decisions.md`。
+   - **D1 上車窗 30→45/60**:全年實測 45 分 +NT$151 萬/年、未派 12→2;60 分再 +134 萬。
+     待車隊就「乘客最晚到場 = 預約 +45/+60 分」的政策拍板,再改 `pickup_window_min`。
+     (附帶實證:工時上限 8h **非瓶頸**、前後置 40 分合理偏保守,皆維持。)
 
 > ⏸ **徵詢成功率學習**(見上方「🔔 啟動主動告知」):等 `pool-consent` 累積真實徵詢結果後再做。
 
