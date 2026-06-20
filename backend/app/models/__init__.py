@@ -8,9 +8,16 @@ from app.models.dispatch_history import DispatchHistory
 from app.models.dispatch_comparison import DispatchComparison
 from app.models.unassigned_record import UnassignedRecord
 from app.models.push_subscription import PushSubscription
+from app.models.app_setting import AppSetting
+from app.models.shift import ShiftPattern, ShiftException
+from app.models.fixed_route import FixedRoute
+from app.models.driver_vehicle_assignment import DriverVehicleAssignment
+from app.models.pool_projection import PoolProjection
 
 __all__ = [
     "Vehicle", "Driver", "Order", "AddressPoint", "AddressAlias",
     "RouteStop", "User", "DispatchHistory", "DispatchComparison",
-    "UnassignedRecord", "PushSubscription",
+    "UnassignedRecord", "PushSubscription", "AppSetting",
+    "ShiftPattern", "ShiftException", "FixedRoute",
+    "DriverVehicleAssignment", "PoolProjection",
 ]
