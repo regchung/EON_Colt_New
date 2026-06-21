@@ -93,8 +93,11 @@ driver_vehicle_assignment / push_subscription
 
 ## 護城河 / 不做什麼
 - **護城河**:台灣在地化(Map8 門牌、車種/福祉、長照平台格式)+ GCal 低摩擦採用。
-- **刻意不做**:不自研派遣引擎(VROOM,需強度時換 Timefold,**非** PyVRP/PDPTW 不支援);
-  不上重模型(TimesFM/類神經網路,實測基線更準);不導入過重依賴(MarkItDown/Docling)。
+- **刻意不做**:不自研派遣引擎(VROOM;需強度時換 **OR-Tools / Timefold Java**——
+  Timefold-Python 2025-10 已封存,**非** PyVRP/PDPTW 不支援;見 `eval-docling-tenancy-timefold.md`);
+  不上重模型(TimesFM/類神經網路,實測基線更準);預設不導入過重依賴(MarkItDown 全否決)。
+- **可選(預設關)**:Docling 本地文件抽取——僅在 `EXTRACTOR=docling` 時啟用,
+  為「PII 不出機房」的合規需求而存在,未寫入 requirements;預設仍走輕量原生抽取。
 
 ## 部署
 - `docker compose up --build`;OSRM 一次性下載台灣 OSM。

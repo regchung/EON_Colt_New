@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     MATRIX_PROVIDER: str = "osrm"
     OSRM_URL: str = "http://osrm:5000"
 
+    # 文件抽取器:'native'(輕量原生 pypdf/docx/openpyxl,預設)
+    #   | 'docling'(本地版面/表格抽取,PII 不出機房;需另裝 docling,見 docs/eval-docling-tenancy-timefold.md)
+    EXTRACTOR: str = "native"
+
     # AI 派遣(Claude API)
     ANTHROPIC_API_KEY: str = ""
     AI_DISPATCH_MODEL: str = "claude-haiku-4-5-20251001"   # 快速、低成本

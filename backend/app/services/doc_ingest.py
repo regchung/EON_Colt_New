@@ -2,12 +2,15 @@
 結構化訂單 → 交回現有匯入流程(建單 + 地理編碼)。
 
 設計取捨:
-- **文字抽取**刻意用輕量原生套件(pypdf / python-docx / openpyxl / xlrd / 純解碼),
-  不引入 MarkItDown 全家桶(其 magika + onnxruntime 過重),符合本專案「精簡」策略;
-  抽取層為單一函式,日後要換 MarkItDown 只需替換 `extract_text`。
-- ⚠️ **個資**:本流程會把文件原文(可能含乘客姓名/電話/地址)送往 Claude API 抽取。
+- **文字抽取**預設用輕量原生套件(pypdf / python-docx / openpyxl / xlrd / 純解碼),
+  不引入 MarkItDown 全家桶(其 magika + onnxruntime 過重),符合本專案「精簡」策略。
+  抽取層為單一分派函式 `extract_text`,由 `settings.EXTRACTOR` 切換:
+  `'native'`(預設)或 `'docling'`(本地版面/表格抽取,PII 不出機房;見
+  `docs/eval-docling-tenancy-timefold.md`)。docling 為可選相依,未安裝時優雅退回 native。
+- ⚠️ **個資**:`native` 模式仍會把文件原文(可能含乘客姓名/電話/地址)送往 Claude API 抽取。
   與「送 Claude 一律去識別化」原則有張力——文件抽取本質需要原文。正式上線處理真實 PII 前,
-  應改用本地/地端模型抽取(見 BACKLOG「正式部署:個資合規」)。此處不記錄文件內容到日誌。
+  改 `EXTRACTOR=docling` 在地端抽取,並於送任何雲端前加去識別化中介層(見 BACKLOG「個資合規」)。
+  此處不記錄文件內容到日誌。
 """
 from __future__ import annotations
 
@@ -34,7 +37,40 @@ def _ext(filename: str) -> str:
 
 
 def extract_text(filename: str, content: bytes) -> str:
-    """把上傳文件轉成純文字。不支援的副檔名拋 ValueError。"""
+    """把上傳文件轉成純文字。不支援的副檔名拋 ValueError。
+
+    依 settings.EXTRACTOR 選抽取器:
+    - 'native'(預設):輕量原生套件(pypdf/docx/openpyxl/xlrd),行為同歷史。
+    - 'docling':本地版面/表格抽取(PII 不出機房);未安裝 docling 時優雅退回 native。
+    """
+    from app.core.config import settings
+    if getattr(settings, "EXTRACTOR", "native") == "docling":
+        try:
+            return _extract_docling(filename, content)
+        except ImportError:
+            # 未安裝 docling → 退回原生抽取(不中斷;PoC 隔離原則)
+            pass
+    return _extract_native(filename, content)
+
+
+def _extract_docling(filename: str, content: bytes) -> str:
+    """用 Docling 做本地版面/表格抽取 → Markdown 純文字(PII 不出機房)。
+
+    docling 為可選相依(未寫入 requirements.txt),未安裝時拋 ImportError 由上層退回 native。
+    不支援的副檔名(csv/txt/md)仍走原生解碼。
+    """
+    ext = _ext(filename)
+    if ext in ("csv", "txt", "md"):
+        return _extract_native(filename, content)
+    from docling.datamodel.base_models import DocumentStream
+    from docling.document_converter import DocumentConverter
+    stream = DocumentStream(name=filename, stream=io.BytesIO(content))
+    result = DocumentConverter().convert(stream)
+    return result.document.export_to_markdown()
+
+
+def _extract_native(filename: str, content: bytes) -> str:
+    """輕量原生抽取(預設)。"""
     ext = _ext(filename)
     if ext == "pdf":
         from pypdf import PdfReader
