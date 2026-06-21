@@ -63,8 +63,8 @@ async function onDrop(toVid) {
   <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>
 
   <div v-if="board" class="board-scroll d-flex gap-2 pb-2" style="overflow-x:auto">
-    <!-- 未指派欄 -->
-    <div class="board-col border rounded bg-light" @dragover.prevent @drop="onDrop(null)">
+    <!-- 未指派欄(固定左側,只有右側車欄左右滑動) -->
+    <div class="board-col unassigned-col border rounded bg-light" @dragover.prevent @drop="onDrop(null)">
       <div class="board-head bg-secondary text-white px-2 py-1 small fw-semibold">
         未指派 <span class="badge bg-light text-dark">{{ board.unassigned.length }}</span>
       </div>
@@ -113,6 +113,7 @@ async function onDrop(toVid) {
 
 <style scoped>
 .board-col { width: 220px; min-width: 220px; max-height: 78vh; display: flex; flex-direction: column; }
+.unassigned-col { position: sticky; left: 0; z-index: 4; box-shadow: 3px 0 6px rgba(0, 0, 0, .12); }
 .board-head { position: sticky; top: 0; z-index: 1; }
 .board-body { overflow-y: auto; flex: 1; min-height: 60px; }
 .trip-card { cursor: grab; }
