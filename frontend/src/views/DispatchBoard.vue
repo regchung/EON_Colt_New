@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import client from '../api/client'
 
 const date = ref(new Date().toISOString().slice(0, 10))
@@ -8,6 +8,20 @@ const loading = ref(false)
 const error = ref('')
 const dragId = ref(null)
 const dragFrom = ref(null)
+const fleet = ref('')        // 車行過濾
+const plateQ = ref('')       // 車牌過濾(含子字串)
+
+const fleets = computed(() => {
+  if (!board.value) return []
+  return [...new Set(board.value.vehicles.map((v) => v.fleet).filter(Boolean))].sort()
+})
+const visibleVehicles = computed(() => {
+  if (!board.value) return []
+  const q = plateQ.value.trim().toUpperCase()
+  return board.value.vehicles.filter((v) =>
+    (!fleet.value || v.fleet === fleet.value)
+    && (!q || (v.plate || '').toUpperCase().includes(q)))
+})
 
 async function load() {
   loading.value = true; error.value = ''
@@ -36,7 +50,14 @@ async function onDrop(toVid) {
     <span class="fw-semibold">🧲 派遣看板</span>
     <input v-model="date" type="date" class="form-control form-control-sm" style="width:160px" @change="load" />
     <button class="btn btn-sm btn-primary" :disabled="loading" @click="load">{{ loading ? '讀取中…' : '重新整理' }}</button>
-    <span v-if="board" class="small text-muted">出勤/有派 {{ board.vehicles.length }} 車 · 未指派 {{ board.unassigned_count }}</span>
+    <select v-model="fleet" class="form-select form-select-sm" style="width:140px" title="車行過濾">
+      <option value="">全部車行</option>
+      <option v-for="f in fleets" :key="f" :value="f">{{ f }}</option>
+    </select>
+    <input v-model="plateQ" placeholder="車牌過濾" class="form-control form-control-sm" style="width:120px" />
+    <span v-if="board" class="small text-muted">
+      顯示 {{ visibleVehicles.length }}/{{ board.vehicles.length }} 車 · 未指派 {{ board.unassigned_count }}
+    </span>
     <span class="small text-muted ms-auto">拖曳訂單卡到其他車欄即重新指派;拖回「未指派」可卸載。紅框=時間衝突。</span>
   </div>
   <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>
@@ -59,8 +80,8 @@ async function onDrop(toVid) {
       </div>
     </div>
 
-    <!-- 各車欄 -->
-    <div v-for="v in board.vehicles" :key="v.vehicle_id" class="board-col border rounded"
+    <!-- 各車欄(套用車行/車牌過濾) -->
+    <div v-for="v in visibleVehicles" :key="v.vehicle_id" class="board-col border rounded"
          @dragover.prevent @drop="onDrop(v.vehicle_id)">
       <div class="board-head px-2 py-1 small" :class="v.conflicts ? 'bg-danger text-white' : 'bg-primary text-white'">
         <div class="d-flex justify-content-between">
