@@ -9,3 +9,6 @@ osrm/data/
 osrm/prepare.log
 
 .claude/
+demo/*.dump
+demo/smartcar-demo-bundle.zip
+.env.bak
