@@ -9,19 +9,28 @@ const error = ref('')
 const dragId = ref(null)
 const dragFrom = ref(null)
 const fleet = ref('')        // 車行過濾
-const plateQ = ref('')       // 車牌過濾(含子字串)
+const plate = ref('')        // 車號過濾(下拉,跟隨車行)
 
 const fleets = computed(() => {
   if (!board.value) return []
   return [...new Set(board.value.vehicles.map((v) => v.fleet).filter(Boolean))].sort()
 })
+const plateOptions = computed(() => {
+  if (!board.value) return []
+  return board.value.vehicles
+    .filter((v) => !fleet.value || v.fleet === fleet.value)
+    .map((v) => v.plate).filter(Boolean).sort()
+})
 const visibleVehicles = computed(() => {
   if (!board.value) return []
-  const q = plateQ.value.trim().toUpperCase()
   return board.value.vehicles.filter((v) =>
     (!fleet.value || v.fleet === fleet.value)
-    && (!q || (v.plate || '').toUpperCase().includes(q)))
+    && (!plate.value || v.plate === plate.value))
 })
+function onFleetChange() {
+  // 換車行時,若已選車號不在新車行內 → 清空
+  if (plate.value && !plateOptions.value.includes(plate.value)) plate.value = ''
+}
 
 async function load() {
   loading.value = true; error.value = ''
@@ -56,11 +65,15 @@ async function onDrop(toVid) {
     <span class="fw-semibold">🧲 派遣看板</span>
     <input v-model="date" type="date" class="form-control form-control-sm" style="width:160px" @change="load" />
     <button class="btn btn-sm btn-primary" :disabled="loading" @click="load">{{ loading ? '讀取中…' : '重新整理' }}</button>
-    <select v-model="fleet" class="form-select form-select-sm" style="width:140px" title="車行過濾">
+    <select v-model="fleet" class="form-select form-select-sm" style="width:140px" title="車行過濾"
+            @change="onFleetChange">
       <option value="">全部車行</option>
       <option v-for="f in fleets" :key="f" :value="f">{{ f }}</option>
     </select>
-    <input v-model="plateQ" placeholder="車牌過濾" class="form-control form-control-sm" style="width:120px" />
+    <select v-model="plate" class="form-select form-select-sm" style="width:130px" title="車號過濾">
+      <option value="">全部車號</option>
+      <option v-for="p in plateOptions" :key="p" :value="p">{{ p }}</option>
+    </select>
     <span v-if="board" class="small text-muted">
       顯示 {{ visibleVehicles.length }}/{{ board.vehicles.length }} 車 · 未指派 {{ board.unassigned_count }}
     </span>
