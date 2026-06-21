@@ -608,6 +608,14 @@ def dispatch_board_view(service_date: date, db: Session = Depends(get_db)):
     return board_svc.board(db, service_date)
 
 
+@router.get("/board/meta")
+def board_meta(db: Session = Depends(get_db)):
+    """看板預設日期:回最近「有派車(已指派訂單)」的日期,供前端一進來就有資料。"""
+    latest = db.scalar(select(func.max(Order.service_date)).where(
+        Order.assigned_vehicle_id.is_not(None)))
+    return {"latest_date": latest.isoformat() if latest else None}
+
+
 @router.get("/daily-tasks/meta")
 def daily_tasks_meta(db: Session = Depends(get_db)):
     """口卡查詢的過濾選項:資料日期範圍 + 車行清單(供前端預設日期與下拉)。"""

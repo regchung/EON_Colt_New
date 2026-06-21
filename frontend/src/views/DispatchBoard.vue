@@ -30,7 +30,13 @@ async function load() {
     board.value = data
   } catch (e) { error.value = e.response?.data?.detail || '讀取失敗' } finally { loading.value = false }
 }
-onMounted(load)
+onMounted(async () => {
+  try {
+    const { data } = await client.get('/dispatch/board/meta')
+    if (data.latest_date) date.value = data.latest_date   // 預設跳到最近有派車的日期
+  } catch (e) { /* 忽略,沿用今天 */ }
+  await load()
+})
 
 function onDragStart(orderId, fromVid) { dragId.value = orderId; dragFrom.value = fromVid }
 async function onDrop(toVid) {
@@ -61,6 +67,16 @@ async function onDrop(toVid) {
     <span class="small text-muted ms-auto">拖曳訂單卡到其他車欄即重新指派;拖回「未指派」可卸載。紅框=時間衝突。</span>
   </div>
   <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>
+
+  <!-- 該日無派車資料 -->
+  <div v-if="board && !board.vehicles.length && !board.unassigned.length" class="alert alert-info py-2">
+    該日期（<b>{{ date }}</b>)無排班/派遣車輛。請改選有資料的日期(例:已排班日或歷史日),
+    或先到「訂單管理」按「🚀 一鍵排班」。
+  </div>
+  <!-- 有資料但過濾後無車 -->
+  <div v-else-if="board && board.vehicles.length && !visibleVehicles.length" class="alert alert-warning py-2">
+    車行/車牌過濾後沒有符合的車輛(全部 {{ board.vehicles.length }} 車)。請放寬過濾條件。
+  </div>
 
   <div v-if="board" class="board-scroll d-flex gap-2 pb-2" style="overflow-x:auto">
     <!-- 未指派欄(固定左側,只有右側車欄左右滑動) -->
