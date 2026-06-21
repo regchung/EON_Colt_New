@@ -33,11 +33,11 @@ def _mins(dt):
 
 
 def board(db: Session, service_date: date) -> dict:
-    # 已指派(含進行中)
+    # 已指派(scheduled/ongoing=即時派遣;done=歷史日實際派遣,讓 2025 等歷史日也看得到趟次)
     assigned = list(db.scalars(
         select(Order).where(
             Order.service_date == service_date,
-            Order.status.in_(("scheduled", "ongoing")),
+            Order.status.in_(("scheduled", "ongoing", "done")),
             Order.assigned_vehicle_id.is_not(None),
         )
     ).all())
