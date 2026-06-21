@@ -12,3 +12,7 @@ osrm/prepare.log
 demo/*.dump
 demo/smartcar-demo-bundle.zip
 .env.bak
+
+# 匯出含 PII 的訂單檔,勿入庫
+*.xlsx
+全部訂單_*.xlsx
