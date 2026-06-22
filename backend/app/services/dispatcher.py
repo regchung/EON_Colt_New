@@ -17,6 +17,8 @@ import vroom
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.driver import Driver
+from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.order import Order
 from app.models.route import RouteStop
 from app.models.vehicle import Vehicle
@@ -56,6 +58,16 @@ def _is_welfare(o: Order) -> bool:
     return o.vehicle_type == "welfare"
 
 
+def _vehicles_with_driver(db: Session, service_date: date) -> set[int]:
+    """當天「有司機」的車輛集合:司機預設車(Driver.vehicle_id)+ 當日輪車指派。"""
+    ids = {vid for (vid,) in db.execute(
+        select(Driver.vehicle_id).where(Driver.vehicle_id.is_not(None))).all()}
+    ids |= {vid for (vid,) in db.execute(
+        select(DriverVehicleAssignment.vehicle_id)
+        .where(DriverVehicleAssignment.service_date == service_date)).all()}
+    return ids
+
+
 def _first_coord(*pairs) -> tuple[float, float] | None:
     """回傳第一組非空的 (lng, lat);用於 start/end 的優先序退化。"""
     for lng, lat in pairs:
@@ -77,6 +89,11 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     )
     # 僅納入「當日有出勤(班表)」的車輛;無班表資料的車保守視為不可用
     duty = roster_svc.available_vehicles(db, service_date)
+    # 派遣原則:只用「當天有司機」的車——沒司機的車開不了(預設車 + 當日輪車)。
+    # 安全退路:若完全查無司機對應(車隊未建司機資料),不過濾以免整日無法派遣。
+    driver_veh = _vehicles_with_driver(db, service_date)
+    if driver_veh:
+        duty = {vid: w for vid, w in duty.items() if vid in driver_veh}
     vehicles = list(
         db.scalars(
             select(Vehicle).where(Vehicle.active.is_(True), Vehicle.id.in_(duty.keys()))

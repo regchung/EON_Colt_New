@@ -48,6 +48,13 @@
 - 程式:`dispatcher` `veh_day_start = day_start - margin`;`veh_day_end = day_end + completion_buffer`。
 - 實測(2026-06-22):05:30 發車讓 06:00 桃園早單排入,未派 5→4、已派 202→203(用 38 車)。
 
+## 原則 6:只派給「當天有司機」的車
+- 班表(roster)是以**車輛**排的,可能有「有班表但沒司機」的車;沒司機的車實際開不了。
+- 派遣只納入**當天有司機**的車(司機預設車 `Driver.vehicle_id` + 當日輪車 `DriverVehicleAssignment`)。
+- 安全退路:若整個車隊查無任何司機對應,則不過濾(避免整日無法派遣)。
+- 程式:`dispatcher._vehicles_with_driver` 過濾 `duty`。
+- 實測 2026-06-23:過濾前 35 車(6 台無司機)→ 過濾後 **32 車全有司機、仍 240 單全派**(更省車)。
+
 ---
 
 ## 不變的硬約束(護欄)

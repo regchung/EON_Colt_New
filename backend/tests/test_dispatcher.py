@@ -264,6 +264,8 @@ def test_run_dispatch_wheelchair_only_order_uses_normal_vehicle(haversine, monke
         # 出勤名單只留這台一般車(環境無關:排除真實 shift_pattern 帶入的福祉車)
         monkeypatch.setattr(dispatcher.roster_svc, "available_vehicles",
                             lambda _db, _d: {vid: (None, None)})
+        # 視該測試車為「有司機」,通過派遣只用有司機車的過濾
+        monkeypatch.setattr(dispatcher, "_vehicles_with_driver", lambda _db, _d: {vid})
         res = dispatcher.run_dispatch(db, TEST_DATE)
         assert "error" not in res, res
         db.expire_all()
