@@ -7,6 +7,7 @@ class VehicleBase(BaseModel):
     plate: str | None = None
     type: str = "normal"  # 'welfare' | 'normal'
     seats: int = 4
+    wheelchair: int = 0
     shift_start: time | None = None
     shift_end: time | None = None
     depot_lng: float | None = None

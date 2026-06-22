@@ -13,6 +13,7 @@ class Vehicle(Base):
     plate: Mapped[str | None] = mapped_column(String(20))
     type: Mapped[str] = mapped_column(String(10), default="normal")  # 'welfare' | 'normal'
     seats: Mapped[int] = mapped_column(Integer, default=4)
+    wheelchair: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # 可載輪椅數
     shift_start: Mapped[time | None] = mapped_column(Time)
     shift_end: Mapped[time | None] = mapped_column(Time)
     depot_lng: Mapped[float | None] = mapped_column(Float)

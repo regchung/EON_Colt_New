@@ -65,6 +65,7 @@ const blank = () => ({
   plate: '',
   type: 'normal',
   seats: 4,
+  wheelchair: 0,
   shift_start: '08:00',
   shift_end: '18:00',
   depot_lng: null,
@@ -137,8 +138,8 @@ async function remove(v) {
   <div v-if="reconcileResult" class="alert alert-warning">
     對帳完成(名冊內車牌 {{ reconcileResult.file_plates }} / 司機 {{ reconcileResult.file_names }}):
     車輛 停派 +{{ reconcileResult.vehicles_suspended }} / 啟用 +{{ reconcileResult.vehicles_activated }};
-    司機 停派 +{{ reconcileResult.drivers_suspended }} / 啟用 +{{ reconcileResult.drivers_activated }}。
-    停派者不納入自動派遣。
+    司機 停派 +{{ reconcileResult.drivers_suspended }} / 啟用 +{{ reconcileResult.drivers_activated }};
+    車輛座位/輪椅數更新 {{ reconcileResult.vehicles_specs_updated }} 台。停派者不納入自動派遣。
   </div>
 
   <div v-if="store.error" class="alert alert-danger">{{ store.error }}</div>
@@ -159,9 +160,13 @@ async function remove(v) {
             <option value="welfare">福祉車</option>
           </select>
         </div>
-        <div class="col-6 col-md-4">
+        <div class="col-6 col-md-2">
           <label class="form-label">座位數</label>
           <input v-model.number="form.seats" type="number" min="1" class="form-control" />
+        </div>
+        <div class="col-6 col-md-2">
+          <label class="form-label">輪椅數</label>
+          <input v-model.number="form.wheelchair" type="number" min="0" class="form-control" />
         </div>
         <div class="col-6 col-md-3">
           <label class="form-label">班別開始</label>
@@ -198,7 +203,7 @@ async function remove(v) {
     <table class="table table-striped table-hover align-middle">
       <thead>
         <tr>
-          <th>#</th><th>車牌</th><th>車種</th><th>座位</th><th>起訖點</th><th>班別</th><th>狀態</th><th></th>
+          <th>#</th><th>車牌</th><th>車種</th><th>座位/輪椅</th><th>起訖點</th><th>班別</th><th>狀態</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -210,7 +215,7 @@ async function remove(v) {
               {{ v.type === 'welfare' ? '福祉車' : '一般車' }}
             </span>
           </td>
-          <td>{{ v.seats }}</td>
+          <td>{{ v.seats }} 座<span v-if="v.wheelchair" class="text-info"> · ♿{{ v.wheelchair }}</span></td>
           <td>
             <span v-if="v.start_lng != null" class="badge bg-info text-dark"
                   :title="`起 ${v.start_lng?.toFixed(4)},${v.start_lat?.toFixed(4)} / 訖 ${v.end_lng?.toFixed(4)},${v.end_lat?.toFixed(4)}`">已設</span>

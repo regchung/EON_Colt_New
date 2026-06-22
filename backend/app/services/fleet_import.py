@@ -80,6 +80,7 @@ def import_fleet(db: Session, content: bytes, filename: str) -> dict:
                 db.add(vehicle)
             vehicle.type = "welfare" if welfare else "normal"
             vehicle.seats = seats
+            vehicle.wheelchair = wheelchair
             vehicle.start_lng, vehicle.start_lat = s_lng, s_lat
             vehicle.end_lng, vehicle.end_lat = e_lng, e_lat
             if fleet:
@@ -116,13 +117,20 @@ def reconcile_fleet(db: Session, content: bytes, filename: str) -> dict:
     車輛以「車牌號碼」配對、司機以「駕駛姓名」配對。回傳異動統計。
     """
     rows = _read_rows(filename, content)
-    file_plates = {p for r in rows if (p := _s(r.get("車牌號碼")))}
+    # 車牌 → (乘客數, 輪椅數):供更新車輛座位/輪椅數
+    file_specs: dict[str, tuple[int, int]] = {}
+    for r in rows:
+        p = _s(r.get("車牌號碼"))
+        if p:
+            file_specs[p] = (_i(r.get("乘客數")) or 4, _i(r.get("輪椅數")) or 0)
+    file_plates = set(file_specs)
     file_names = {n for r in rows if (n := _s(r.get("駕駛姓名")))}
 
     rep = {
         "file_plates": len(file_plates), "file_names": len(file_names),
         "vehicles_suspended": 0, "vehicles_activated": 0,
         "drivers_suspended": 0, "drivers_activated": 0,
+        "vehicles_specs_updated": 0,
         "suspended_vehicles": [], "suspended_drivers": [],
     }
     for v in db.scalars(select(Vehicle)).all():
@@ -132,6 +140,12 @@ def reconcile_fleet(db: Session, content: bytes, filename: str) -> dict:
             rep["vehicles_suspended" if should else "vehicles_activated"] += 1
         if should:
             rep["suspended_vehicles"].append(v.plate)
+        else:
+            # 名冊內車輛:用名冊的乘客數/輪椅數更新座位與輪椅數
+            seats, wc = file_specs[_s(v.plate)]
+            if v.seats != seats or v.wheelchair != wc:
+                v.seats, v.wheelchair = seats, wc
+                rep["vehicles_specs_updated"] += 1
     for d in db.scalars(select(Driver)).all():
         should = (_s(d.name) not in file_names)
         if d.suspended != should:
