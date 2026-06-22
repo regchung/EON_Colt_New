@@ -59,7 +59,8 @@ def _dt(v) -> datetime | None:
 
 
 def _is_welfare(type_req: str | None, wheelchair: int | None) -> bool:
-    return bool((type_req and "福祉" in type_req) or (wheelchair and wheelchair > 0))
+    # 派遣原則4:是否需福祉車「只看車型」(長照車型要求含「福祉」),不以輪椅數判定。
+    return bool(type_req and "福祉" in type_req)
 
 
 def _read_rows(filename: str, content: bytes) -> list[dict]:
