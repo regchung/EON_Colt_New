@@ -40,6 +40,18 @@ def update_vehicle(id: int, payload: VehicleUpdate, db: Session = Depends(get_db
     return crud.update(db, obj, payload)
 
 
+@router.post("/{id}/suspend", response_model=VehicleOut)
+def set_vehicle_suspended(id: int, value: bool = True, db: Session = Depends(get_db)):
+    """切換車輛停派狀態(value=true 停派 / false 啟用)。停派車不納入自動派遣。"""
+    obj = crud.get(db, id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Vehicle not found")
+    obj.suspended = value
+    db.commit()
+    db.refresh(obj)
+    return obj
+
+
 @router.delete("/{id}", status_code=204)
 def delete_vehicle(id: int, db: Session = Depends(get_db)):
     obj = crud.get(db, id)

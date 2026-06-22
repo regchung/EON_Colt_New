@@ -2,6 +2,7 @@
 import { onMounted, ref, reactive } from 'vue'
 import { useDriversStore } from '../stores/drivers'
 import { useVehiclesStore } from '../stores/vehicles'
+import client from '../api/client'
 
 const store = useDriversStore()
 const vehicles = useVehiclesStore()
@@ -45,6 +46,10 @@ async function remove(d) {
 function vehicleLabel(id) {
   const v = vehicles.items.find((x) => x.id === id)
   return v ? (v.plate || `車輛#${v.id}`) : '未指派'
+}
+async function toggleSuspend(d) {
+  await client.post(`/drivers/${d.id}/suspend`, null, { params: { value: !d.suspended } })
+  await store.fetchAll()
 }
 </script>
 
@@ -108,11 +113,14 @@ function vehicleLabel(id) {
           <td>{{ d.license_no || '-' }}</td>
           <td>{{ vehicleLabel(d.vehicle_id) }}</td>
           <td>
-            <span class="badge" :class="d.active ? 'bg-success' : 'bg-secondary'">
+            <span v-if="d.suspended" class="badge bg-danger">停派</span>
+            <span v-else class="badge" :class="d.active ? 'bg-success' : 'bg-secondary'">
               {{ d.active ? '在職' : '離職' }}
             </span>
           </td>
           <td class="text-nowrap">
+            <button class="btn btn-sm me-1" :class="d.suspended ? 'btn-outline-success' : 'btn-outline-warning'"
+                    @click="toggleSuspend(d)">{{ d.suspended ? '啟用' : '停派' }}</button>
             <button class="btn btn-sm btn-outline-primary me-1" @click="openEdit(d)">編輯</button>
             <button class="btn btn-sm btn-outline-danger" @click="remove(d)">刪除</button>
           </td>

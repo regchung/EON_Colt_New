@@ -17,6 +17,7 @@ class VehicleBase(BaseModel):
     end_lat: float | None = None
     home_fleet: str | None = None
     active: bool = True
+    suspended: bool = False
 
 
 class VehicleCreate(VehicleBase):

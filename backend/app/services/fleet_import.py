@@ -108,3 +108,36 @@ def import_fleet(db: Session, content: bytes, filename: str) -> dict:
 
     db.commit()
     return rep
+
+
+def reconcile_fleet(db: Session, content: bytes, filename: str) -> dict:
+    """依名冊對帳:檔內車牌/姓名 → 啟用(suspended=False);不在檔內 → 停派(suspended=True)。
+
+    車輛以「車牌號碼」配對、司機以「駕駛姓名」配對。回傳異動統計。
+    """
+    rows = _read_rows(filename, content)
+    file_plates = {p for r in rows if (p := _s(r.get("車牌號碼")))}
+    file_names = {n for r in rows if (n := _s(r.get("駕駛姓名")))}
+
+    rep = {
+        "file_plates": len(file_plates), "file_names": len(file_names),
+        "vehicles_suspended": 0, "vehicles_activated": 0,
+        "drivers_suspended": 0, "drivers_activated": 0,
+        "suspended_vehicles": [], "suspended_drivers": [],
+    }
+    for v in db.scalars(select(Vehicle)).all():
+        should = (_s(v.plate) not in file_plates)
+        if v.suspended != should:
+            v.suspended = should
+            rep["vehicles_suspended" if should else "vehicles_activated"] += 1
+        if should:
+            rep["suspended_vehicles"].append(v.plate)
+    for d in db.scalars(select(Driver)).all():
+        should = (_s(d.name) not in file_names)
+        if d.suspended != should:
+            d.suspended = should
+            rep["drivers_suspended" if should else "drivers_activated"] += 1
+        if should:
+            rep["suspended_drivers"].append(d.name)
+    db.commit()
+    return rep

@@ -7,6 +7,7 @@ class DriverBase(BaseModel):
     license_no: str | None = None
     vehicle_id: int | None = None
     active: bool = True
+    suspended: bool = False
 
 
 class DriverCreate(DriverBase):

@@ -24,3 +24,4 @@ class Vehicle(Base):
     end_lat: Mapped[float | None] = mapped_column(Float)
     home_fleet: Mapped[str | None] = mapped_column(String(20))  # 最常所屬車行(共用車池,僅標記)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
+    suspended: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # 停派:不納入自動派遣

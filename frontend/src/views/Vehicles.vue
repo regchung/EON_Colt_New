@@ -33,6 +33,34 @@ async function uploadFleet(e) {
   }
 }
 
+// --- 名冊對帳(不在檔內→停派)---
+const reconcileInput = ref(null)
+const reconcileResult = ref(null)
+async function uploadReconcile(e) {
+  const f = e.target.files?.[0]
+  if (!f) return
+  reconcileResult.value = null
+  importError.value = ''
+  try {
+    const fd = new FormData()
+    fd.append('file', f)
+    const { data } = await client.post('/fleet/reconcile', fd, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    reconcileResult.value = data
+    await store.fetchAll()
+  } catch (err) {
+    importError.value = err.response?.data?.detail || '對帳失敗'
+  } finally {
+    if (reconcileInput.value) reconcileInput.value.value = ''
+  }
+}
+
+async function toggleSuspend(v) {
+  await client.post(`/vehicles/${v.id}/suspend`, null, { params: { value: !v.suspended } })
+  await store.fetchAll()
+}
+
 const blank = () => ({
   plate: '',
   type: 'normal',
@@ -85,6 +113,10 @@ async function remove(v) {
         匯入車隊名冊
       </button>
       <input ref="fileInput" type="file" accept=".xls,.xlsx" class="d-none" @change="uploadFleet" />
+      <button class="btn btn-outline-danger" @click="reconcileInput?.click()" title="不在名冊中的車輛/司機改為停派">
+        依名冊對帳
+      </button>
+      <input ref="reconcileInput" type="file" accept=".xls,.xlsx" class="d-none" @change="uploadReconcile" />
       <button class="btn btn-primary" @click="openCreate">+ 新增車輛</button>
     </div>
   </div>
@@ -100,6 +132,13 @@ async function remove(v) {
     司機 新增 {{ importResult.drivers_created }} / 更新 {{ importResult.drivers_updated }};
     福祉 {{ importResult.welfare }} / 一般 {{ importResult.normal }}
     <span v-if="importResult.errors?.length" class="text-danger">;錯誤 {{ importResult.errors.length }} 列</span>
+  </div>
+
+  <div v-if="reconcileResult" class="alert alert-warning">
+    對帳完成(名冊內車牌 {{ reconcileResult.file_plates }} / 司機 {{ reconcileResult.file_names }}):
+    車輛 停派 +{{ reconcileResult.vehicles_suspended }} / 啟用 +{{ reconcileResult.vehicles_activated }};
+    司機 停派 +{{ reconcileResult.drivers_suspended }} / 啟用 +{{ reconcileResult.drivers_activated }}。
+    停派者不納入自動派遣。
   </div>
 
   <div v-if="store.error" class="alert alert-danger">{{ store.error }}</div>
@@ -179,11 +218,14 @@ async function remove(v) {
           </td>
           <td>{{ (v.shift_start || '').slice(0,5) }} ~ {{ (v.shift_end || '').slice(0,5) }}</td>
           <td>
-            <span class="badge" :class="v.active ? 'bg-success' : 'bg-secondary'">
+            <span v-if="v.suspended" class="badge bg-danger">停派</span>
+            <span v-else class="badge" :class="v.active ? 'bg-success' : 'bg-secondary'">
               {{ v.active ? '啟用' : '停用' }}
             </span>
           </td>
           <td class="text-nowrap">
+            <button class="btn btn-sm me-1" :class="v.suspended ? 'btn-outline-success' : 'btn-outline-warning'"
+                    @click="toggleSuspend(v)">{{ v.suspended ? '啟用' : '停派' }}</button>
             <button class="btn btn-sm btn-outline-primary me-1" @click="openEdit(v)">編輯</button>
             <button class="btn btn-sm btn-outline-danger" @click="remove(v)">刪除</button>
           </td>

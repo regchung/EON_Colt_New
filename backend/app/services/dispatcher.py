@@ -59,12 +59,14 @@ def _is_welfare(o: Order) -> bool:
 
 
 def _vehicles_with_driver(db: Session, service_date: date) -> set[int]:
-    """當天「有司機」的車輛集合:司機預設車(Driver.vehicle_id)+ 當日輪車指派。"""
+    """當天「有(未停派)司機」的車輛集合:司機預設車 + 當日輪車指派。停派司機不算。"""
     ids = {vid for (vid,) in db.execute(
-        select(Driver.vehicle_id).where(Driver.vehicle_id.is_not(None))).all()}
-    ids |= {vid for (vid,) in db.execute(
-        select(DriverVehicleAssignment.vehicle_id)
-        .where(DriverVehicleAssignment.service_date == service_date)).all()}
+        select(Driver.vehicle_id)
+        .where(Driver.vehicle_id.is_not(None), Driver.suspended.is_(False))).all()}
+    ids |= {vid for (vid, susp) in db.execute(
+        select(DriverVehicleAssignment.vehicle_id, Driver.suspended)
+        .join(Driver, Driver.id == DriverVehicleAssignment.driver_id)
+        .where(DriverVehicleAssignment.service_date == service_date)).all() if not susp}
     return ids
 
 
@@ -89,7 +91,12 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     )
     # 僅納入「當日有出勤(班表)」的車輛;無班表資料的車保守視為不可用
     duty = roster_svc.available_vehicles(db, service_date)
-    # 派遣原則:只用「當天有司機」的車——沒司機的車開不了(預設車 + 當日輪車)。
+    # 排除「停派」車輛(suspended)— 不納入自動派遣。
+    susp_veh = {vid for (vid,) in db.execute(
+        select(Vehicle.id).where(Vehicle.suspended.is_(True))).all()}
+    if susp_veh:
+        duty = {vid: w for vid, w in duty.items() if vid not in susp_veh}
+    # 派遣原則:只用「當天有(未停派)司機」的車——沒司機/司機停派的車開不了。
     # 安全退路:若完全查無司機對應(車隊未建司機資料),不過濾以免整日無法派遣。
     driver_veh = _vehicles_with_driver(db, service_date)
     if driver_veh:
