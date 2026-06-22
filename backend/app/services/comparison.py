@@ -124,7 +124,7 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
         if s < DAY_START or s > DAY_END:
             continue   # 上車落在服務時段外 → 不納入(於未派明細標 out_of_hours)
         p_idx, d_idx = ord_pts[o.id]
-        welfare = o.vehicle_type == "welfare" or bool(o.need_wheelchair)
+        welfare = o.vehicle_type == "welfare"   # 原則4:只看車型,不以 need_wheelchair 判定
         # 共乘需同意:未同意者第二維度佔滿 EXCL_CAP → 與任何單都無法同車(獨佔)
         excl = 1 if o.allow_pool else EXCL_CAP
         problem.add_shipment(
@@ -150,7 +150,7 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
         if o.id in assigned_ids:
             continue
         s = _secs_tw(o.pickup_time)
-        need_welfare = o.vehicle_type == "welfare" or bool(o.need_wheelchair)
+        need_welfare = o.vehicle_type == "welfare"   # 原則4:只看車型
         p_idx, d_idx = ord_pts[o.id]
         if s < DAY_START or s > DAY_END:
             code = "out_of_hours"
