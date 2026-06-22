@@ -245,6 +245,7 @@ def run_batch(db: Session, window_min: int = 30, progress=None) -> dict:
             skipped += 1
             continue
         detail = r.pop("unassigned_detail", [])
+        r.pop("plan", None)   # plan 為 return_plan 用,非 DispatchComparison 欄位
         db.add(DispatchComparison(**r))
         n_unassigned += _persist_unassigned(db, fleet, sd, window_min, detail)
         done += 1
