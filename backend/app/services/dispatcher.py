@@ -178,16 +178,20 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     # 4) 組 VROOM 問題(營運參數由系統設定提供,可由管理者於設定頁調整)
     prm = settings_svc.dispatch_params(db)
     day_start, day_end = prm["day_start_sec"], prm["day_end_sec"]
-    day_end_op = day_end + prm.get("completion_buffer_sec", 0)   # 車輛可延後完成的營運上限
+    # 司機可提早 driver_margin 發車(去接服務時段開頭的 06:00 早單);
+    # 收車端保留完成緩衝,讓「18:30 前已上車」的在途趟次可跨過完成(乘客上車仍限服務時段)。
+    margin = prm.get("driver_margin_sec", 0)
+    veh_day_start = day_start - margin
+    veh_day_end = day_end + prm.get("completion_buffer_sec", 0)
     problem = vroom.Input()
     problem.set_durations_matrix("car", arr)
 
     for v in vehicles:
         # 班別時段來自當日班表(無則用服務時段),再與服務時段取交集
         rs, re = duty.get(v.id, (None, None))
-        win_start = max(day_start, rs) if rs is not None else day_start
-        # 營運迄:可延後到 day_end_op 以完成 18:00 前上車的趟次;班別迄(re)若有設定則尊重
-        win_end = min(day_end_op, re) if re is not None else day_end_op
+        win_start = max(veh_day_start, rs) if rs is not None else veh_day_start
+        # 營運迄 = 服務迄 + margin(司機收車緩衝);班別迄(re)若有設定則尊重
+        win_end = min(veh_day_end, re) if re is not None else veh_day_end
         skills = {1} if v.type == "welfare" else set()
         if v.id in lock_vehicles:
             skills.add(LOCK_SKILL_BASE + v.id)   # 鎖住其進行中行程的專屬技能
