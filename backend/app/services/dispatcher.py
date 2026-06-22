@@ -51,7 +51,9 @@ def _pickup_window(o: Order) -> tuple[int, int]:
 
 
 def _is_welfare(o: Order) -> bool:
-    return o.vehicle_type == "welfare" or bool(o.need_wheelchair)
+    # 派遣原則4:是否需福祉車「只看車型」(匯入時「福祉車」字樣→vehicle_type='welfare');
+    # 其餘訂單不限車種(福祉車為能力超集,仍可兼接)。不再以 need_wheelchair 單獨判定。
+    return o.vehicle_type == "welfare"
 
 
 def _first_coord(*pairs) -> tuple[float, float] | None:
@@ -213,8 +215,12 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             out_of_service += 1
             continue
         pw_end = min(pw_end, day_end)   # 上車不得晚於 18:00
-        # 共乘需同意(設定可關閉):需同意但未同意者第二維度佔滿 → 獨佔整車
-        excl = EXCL_CAP if (prm["require_consent"] and not o.allow_pool) else 1
+        # 共乘需同意(設定可關閉):需同意但未同意者第二維度佔滿 → 獨佔整車。
+        # 派遣原則1:固定趟次可共乘 → 強制可併車(excl=1),不受同意限制。
+        if o.id in fixed_pins:
+            excl = 1
+        else:
+            excl = EXCL_CAP if (prm["require_consent"] and not o.allow_pool) else 1
         pickup = vroom.ShipmentStep(
             id=o.id, location=p_idx, default_service=prm["setup_sec"],
             time_windows=[vroom.TimeWindow(pw_start, pw_end)],
