@@ -229,3 +229,47 @@ def test_run_dispatch_over_capacity_unassigned(haversine):
     finally:
         _cleanup(db)
         db.close()
+
+
+# ----- 派遣原則 4:是否需福祉車「只看車型」 -----
+
+def test_is_welfare_judged_by_vehicle_type_only():
+    """純函式:_is_welfare 只認 vehicle_type=='welfare',不再以 need_wheelchair 判定。"""
+    welfare = Order(vehicle_type="welfare", need_wheelchair=False)
+    normal_wc = Order(vehicle_type="normal", need_wheelchair=True)
+    normal = Order(vehicle_type="normal", need_wheelchair=False)
+    assert dispatcher._is_welfare(welfare) is True          # 車型福祉 → 需福祉車
+    assert dispatcher._is_welfare(normal_wc) is False        # 僅輪椅、車型一般 → 不需福祉車
+    assert dispatcher._is_welfare(normal) is False
+
+
+def test_run_dispatch_wheelchair_only_order_uses_normal_vehicle(haversine, monkeypatch):
+    """原則4 整合:車型=一般 但 need_wheelchair=True 的單,在「只有一台一般車出勤」時
+    仍應排入(不再因輪椅而強制福祉車)。monkeypatch 出勤名單只留該一般車,排除真實班表干擾。"""
+    db = SessionLocal()
+    try:
+        _cleanup(db)
+        v = Vehicle(plate="TEST-V1", type="normal", seats=4, active=True,
+                    depot_lng=121.53, depot_lat=25.04, start_lng=121.53, start_lat=25.04,
+                    end_lng=121.53, end_lat=25.04)
+        db.add(v); db.flush()
+        vid = v.id
+        db.add(Order(
+            source_order_no="TEST-DISP-WC", service_date=TEST_DATE, pickup_time=_dt(9),
+            pickup_window_min=30, passenger_name="輪椅但一般車",
+            pickup_address="測試上車WC", dropoff_address="測試下車WC",
+            pickup_lng=121.54, pickup_lat=25.045, dropoff_lng=121.56, dropoff_lat=25.05,
+            pax=1, vehicle_type="normal", need_wheelchair=True, allow_pool=False, status="imported"))
+        db.commit()
+        # 出勤名單只留這台一般車(環境無關:排除真實 shift_pattern 帶入的福祉車)
+        monkeypatch.setattr(dispatcher.roster_svc, "available_vehicles",
+                            lambda _db, _d: {vid: (None, None)})
+        res = dispatcher.run_dispatch(db, TEST_DATE)
+        assert "error" not in res, res
+        db.expire_all()
+        o = db.query(Order).filter(Order.source_order_no == "TEST-DISP-WC").one()
+        assert o.status == "scheduled", "車型一般的輪椅單應可由一般車服務(原則4),卻未排入"
+        assert o.assigned_vehicle_id == vid
+    finally:
+        _cleanup(db)
+        db.close()
