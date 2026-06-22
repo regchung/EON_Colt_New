@@ -1,6 +1,7 @@
 """固定行程匹配:把某日訂單對應到固定行程規則與指定司機/車輛。
 
-匹配:規則 keyword 出現在訂單的 case_tag/上下車地址(依 match_field),且符合時段(早/午/午後/早晚/全天)。
+匹配:**只比對乘客姓名**——規則的 match_name(或 keyword)出現在訂單 passenger_name,
+且符合時段(早/午/午後/早晚/全天)。**不再比對地址/case_tag**(避免某地點所有乘客被灌給同一司機)。
 指定車輛由 driver_resolve.resolve(司機, 日期) 解出(當日輪車 > 預設車)。
 供「預覽比對」與「派遣整合(以 skills 釘車)」共用。
 """
@@ -38,8 +39,12 @@ def _slot_ok(slot: str, hour: int | None) -> bool:
     return True
 
 
-def _haystack(o: Order) -> str:
-    return " ".join(filter(None, [o.case_tag, o.pickup_address, o.dropoff_address, o.passenger_name]))
+def _name_match(rule: FixedRoute, pname: str) -> bool:
+    """只比對乘客姓名:規則 match_name 或 keyword 出現在 passenger_name 即命中。"""
+    for pat in (rule.match_name, rule.keyword):
+        if pat and pat in pname:
+            return True
+    return False
 
 
 def match_for_date(db: Session, service_date: date) -> dict:
@@ -58,19 +63,16 @@ def match_for_date(db: Session, service_date: date) -> dict:
     unresolved: dict[str, str] = {}
 
     for o in orders:
-        hay = _haystack(o)
         pname = o.passenger_name or ""
         h = _hour(o)
         for r in rules:
-            kw_ok = bool(r.keyword) and r.keyword in hay
-            name_ok = bool(r.match_name) and r.match_name in pname
-            if (kw_ok or name_ok) and _slot_ok(r.time_slot, h):
+            if _name_match(r, pname) and _slot_ok(r.time_slot, h):
                 veh = driver_resolve.resolve(db, r.driver_name, service_date)
                 rec = {
                     "order_id": o.id, "rule_id": r.id, "label": r.label,
                     "driver_name": r.driver_name, "time_slot": r.time_slot,
                     "keyword": r.keyword, "match_name": r.match_name,
-                    "matched_by": "姓名" if (name_ok and not kw_ok) else "地點",
+                    "matched_by": "姓名",
                     "time": o.pickup_time.astimezone(TW).strftime("%H:%M") if o.pickup_time else None,
                     "passenger": o.passenger_name,
                     "pickup": o.pickup_address, "dropoff": o.dropoff_address,
