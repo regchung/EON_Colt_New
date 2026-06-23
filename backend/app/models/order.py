@@ -40,6 +40,10 @@ class Order(Base):
     vehicle_type: Mapped[str] = mapped_column(String(10), default="normal")  # welfare|normal
     need_wheelchair: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_pool: Mapped[bool] = mapped_column(Boolean, default=True)
+    # 固定趟「整趟佔用時間(分)」。設定即視為既定區塊(committed block):
+    # 對比/派遣時釘到 assigned_vehicle_id、以此為服務時長、不受最長乘車上限,
+    # 且各固定趟各釘各車(不互相併);None=一般單,維持原最佳化行為。
+    occupancy_min: Mapped[int | None] = mapped_column(Integer)
     pool_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 共乘同意時間(留痕)
     pool_consent_by: Mapped[str | None] = mapped_column(String(50))  # 徵詢/登錄者(行控)
     note: Mapped[str | None] = mapped_column(Text)

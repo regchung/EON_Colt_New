@@ -144,6 +144,23 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
         )
     ).all() if p]
     vehicles = list(db.scalars(select(Vehicle).where(Vehicle.plate.in_(plates))).all()) if plates else []
+
+    # 既定區塊(固定趟):occupancy_min 有值 → 釘到 assigned_vehicle_id。
+    # 確保被釘車輛在集合內;給每筆固定趟一個唯一 skill,只有該車具此 skill → 強制釘車,
+    # 各固定趟各釘各車(去/回程同車),故不會互相併車(回應「A、B 不能綁在一起」)。
+    fixed_orders = [o for o in orders if o.occupancy_min and o.assigned_vehicle_id]
+    have_ids = {v.id for v in vehicles}
+    for vid in {o.assigned_vehicle_id for o in fixed_orders} - have_ids:
+        v = db.get(Vehicle, vid)
+        if v is not None:
+            vehicles.append(v)
+    pin_skill: dict[int, int] = {}      # order_id -> 唯一釘車 skill
+    veh_pins: dict[int, set] = {}        # vehicle_id -> {釘車 skills}
+    for k, fo in enumerate(fixed_orders):
+        sk = 1000 + k
+        pin_skill[fo.id] = sk
+        veh_pins.setdefault(fo.assigned_vehicle_id, set()).add(sk)
+
     if not vehicles:
         return None
 
@@ -199,7 +216,7 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
         # capacity = [座位, 不共乘維度];共乘規則用第二維度表達
         kw = dict(id=v.id, profile="car",
                   capacity=[max(1, v.seats or 1), EXCL_CAP],
-                  skills={1} if v.type == "welfare" else set(),
+                  skills=({1} if v.type == "welfare" else set()) | veh_pins.get(v.id, set()),
                   # 營運迄延後到 20:00,以完成 18:00 前上車的趟次(上車仍限 06–18)
                   time_window=vroom.TimeWindow(DAY_START, DAY_END + COMPLETION_BUFFER),
                   max_travel_time=MAX_WORK_SEC)
@@ -212,11 +229,21 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
             continue   # 上車落在服務時段外 → 不納入(於未派明細標 out_of_hours)
         p_idx, d_idx = ord_pts[o.id]
         welfare = o.vehicle_type == "welfare"   # 原則4:只看車型,不以 need_wheelchair 判定
-        # 共乘需同意:未同意者第二維度佔滿 EXCL_CAP → 與任何單都無法同車(獨佔)
-        excl = 1 if o.allow_pool else EXCL_CAP
-        setup_sec, teardown_sec = _svc_split(o)   # 每趟作業:歷史校準(車行×福祉)
         pw_end = min(s + window_min * 60, DAY_END)
-        deliv_upper = _max_ride_upper(int(arr[p_idx][d_idx]), pw_end)   # 限制最長乘車時間
+        if o.id in pin_skill:
+            # 既定區塊:整趟佔用時間當服務時長、釘指定車(唯一 skill)、不設最長乘車上限;
+            # excl=1 讓同車去/回程與空檔正常單可共存(不互併由唯一 skill 各釘各車保證)。
+            total = (o.occupancy_min or 0) * 60
+            setup_sec, teardown_sec = total // 2, total - total // 2
+            excl = 1
+            deliv_upper = None
+            o_skills = ({1} if welfare else set()) | {pin_skill[o.id]}
+        else:
+            # 共乘需同意:未同意者第二維度佔滿 EXCL_CAP → 與任何單都無法同車(獨佔)
+            excl = 1 if o.allow_pool else EXCL_CAP
+            setup_sec, teardown_sec = _svc_split(o)   # 每趟作業:歷史校準(車行×福祉)
+            deliv_upper = _max_ride_upper(int(arr[p_idx][d_idx]), pw_end)   # 限制最長乘車時間
+            o_skills = {1} if welfare else set()
         deliv_kw = dict(id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=teardown_sec)
         if deliv_upper is not None:
             deliv_kw["time_windows"] = [vroom.TimeWindow(s, deliv_upper)]
@@ -225,7 +252,7 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
                                time_windows=[vroom.TimeWindow(s, pw_end)]),
             vroom.ShipmentStep(**deliv_kw),
             amount=vroom.Amount([max(1, o.pax or 1), excl]),
-            skills={1} if welfare else set(),
+            skills=o_skills,
             priority=100,  # 人工當天已全數服務 → 強制 VROOM 盡量服務,再看需幾台車
         )
 
