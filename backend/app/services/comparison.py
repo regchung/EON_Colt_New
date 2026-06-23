@@ -19,6 +19,7 @@ from app.models.unassigned_record import UnassignedRecord
 from app.models.vehicle import Vehicle
 from app.services import calibration as calib_svc
 from app.services import matrix as matrix_svc
+from app.services import settings as settings_svc
 
 DELIVERY_OFFSET = 1_000_000
 UNROUTABLE = 9_999_999
@@ -120,13 +121,19 @@ def _classify_unassigned(o, secs: int, direct_sec: int, has_welfare: bool,
     return "solver_margin", "車隊仍有閒置/餘力,屬求解邊際未覆蓋(重排或提高搜尋強度可望排入)"
 
 
-def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 30,
+def compare_day(db: Session, fleet: str, service_date: date, window_min: int | None = None,
                 return_plan: bool = False) -> dict | None:
     """回傳對比指標 dict;當日無成行單或無車則回 None。
+
+    window_min=None 時讀系統參數 pickup_window_min(預設窗)。
+    作業時間另乘系統參數 service_time_factor(省車鬆緊主旋鈕,不竄改校準真值)。
 
     return_plan=True 時額外回傳 plan={vehicle_id: [order_id,...](依路線順序)},
     供「系統派遣口卡」呈現系統最佳化後每車每趟(批次不傳此旗標,零額外負擔)。
     """
+    if window_min is None:
+        window_min = settings_svc.get(db, "pickup_window_min", 30)
+    svc_factor = float(settings_svc.get(db, "service_time_factor", 1.0) or 1.0)
     orders = list(db.scalars(
         select(Order).where(
             Order.fleet == fleet, Order.service_date == service_date,
@@ -242,6 +249,9 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int = 3
             # 共乘需同意:未同意者第二維度佔滿 EXCL_CAP → 與任何單都無法同車(獨佔)
             excl = 1 if o.allow_pool else EXCL_CAP
             setup_sec, teardown_sec = _svc_split(o)   # 每趟作業:歷史校準(車行×福祉)
+            if svc_factor != 1.0:                     # 省車鬆緊主旋鈕(係數,不改校準真值)
+                setup_sec = int(setup_sec * svc_factor)
+                teardown_sec = int(teardown_sec * svc_factor)
             deliv_upper = _max_ride_upper(int(arr[p_idx][d_idx]), pw_end)   # 限制最長乘車時間
             o_skills = {1} if welfare else set()
         deliv_kw = dict(id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=teardown_sec)
@@ -335,8 +345,13 @@ def _persist_unassigned(db: Session, fleet: str, service_date: date, window_min:
     return len(detail)
 
 
-def run_batch(db: Session, window_min: int = 30, progress=None) -> dict:
-    """對所有(車行×有成行單的日子)做對比,結果寫入 dispatch_comparison + unassigned_record。"""
+def run_batch(db: Session, window_min: int | None = None, progress=None) -> dict:
+    """對所有(車行×有成行單的日子)做對比,結果寫入 dispatch_comparison + unassigned_record。
+
+    window_min=None 時讀系統參數 pickup_window_min;作業時間另乘 service_time_factor。
+    """
+    if window_min is None:
+        window_min = settings_svc.get(db, "pickup_window_min", 30)
     db.query(DispatchComparison).delete()
     db.query(UnassignedRecord).delete()
     db.commit()

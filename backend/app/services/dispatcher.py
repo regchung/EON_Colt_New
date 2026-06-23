@@ -103,6 +103,11 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     )
     # 僅納入「當日有出勤(班表)」的車輛;無班表資料的車保守視為不可用
     duty = roster_svc.available_vehicles(db, service_date)
+    # 退路:完全沒有值勤名冊(未建班表)時,將全部 active 車視為可出勤(不限班別時間窗),
+    # 仍受下方「停派」與「需有司機」過濾。避免因未建班表而可用車過少、整日大量未派。
+    if not duty:
+        duty = {vid: (None, None) for (vid,) in db.execute(
+            select(Vehicle.id).where(Vehicle.active.is_(True))).all()}
     # 排除「停派」車輛(suspended)— 不納入自動派遣。
     susp_veh = {vid for (vid,) in db.execute(
         select(Vehicle.id).where(Vehicle.suspended.is_(True))).all()}
@@ -248,9 +253,11 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     # 每趟作業時間:依車行×福祉的歷史校準(無校準退回設定頁全域值)
     svc_cal = calib_svc.service_map(db)
     default_service_sec = prm["setup_sec"] + prm["teardown_sec"]
+    svc_factor = prm.get("service_factor", 1.0) or 1.0
 
     def _svc_split(o) -> tuple[int, int]:
         sec = calib_svc.effective_service_sec(svc_cal, o.fleet, _is_welfare(o), default_service_sec)
+        sec = int(sec * svc_factor)   # 省車鬆緊主旋鈕(係數,不改校準真值)
         return sec // 2, sec - sec // 2
 
     out_of_service = 0
