@@ -33,7 +33,7 @@ async function exportCsv() {
   const url = URL.createObjectURL(res.data)
   const a = document.createElement('a')
   a.href = url
-  a.download = `smartcar_${dateFrom.value}_${dateTo.value}.csv`
+  a.download = `eon_colt_${dateFrom.value}_${dateTo.value}.csv`
   a.click()
   URL.revokeObjectURL(url)
 }

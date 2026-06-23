@@ -1,4 +1,4 @@
-# CLAUDE.md — SmartCar 專案記憶
+# CLAUDE.md — EON COLT 專案記憶
 
 給 Claude Code 的專案脈絡。**啟動時先讀本檔**,再看 [`README.md`](README.md) 取完整說明。
 
@@ -40,7 +40,7 @@ docker compose exec backend python -m pytest -q   # 後端測試
 6. **地址簿**:地理編碼先查 `address_alias`→`address_point`,未命中才打 Map8;多描述歸一門牌。
 
 ## 推送到 GitHub
-Repo:https://github.com/regchung/SmartCar(remote `origin` 已設,乾淨 https URL)。
+Repo:https://github.com/regchung/EON_COLT(remote `origin` 已設,乾淨 https URL)。
 **建議用 `gh auth login`(web)**,之後 `git add -A && git commit && git push` 即可。
 切勿把 PAT 寫進指令/設定或提交。提交訊息結尾附:
 `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`

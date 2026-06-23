@@ -57,7 +57,7 @@ def download_template():
     return Response(
         content=body,
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=smartcar_import_template.csv"},
+        headers={"Content-Disposition": "attachment; filename=eon_colt_import_template.csv"},
     )
 
 

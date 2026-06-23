@@ -4,10 +4,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    PROJECT_NAME: str = "SmartCar API"
+    PROJECT_NAME: str = "EON COLT API"
     API_PREFIX: str = "/api"
 
-    DATABASE_URL: str = "postgresql+psycopg://smartcar:smartcar_pw@db:5432/smartcar"
+    DATABASE_URL: str = "postgresql+psycopg://eon_colt:eon_colt_pw@db:5432/eon_colt"
     BACKEND_CORS_ORIGINS: str = "http://localhost:8080,http://localhost:5173"
 
     # 地理編碼 provider:'nominatim' | 'map8'
@@ -16,7 +16,7 @@ class Settings(BaseSettings):
 
     # Nominatim(OpenStreetMap,免費;台灣門牌覆蓋有限)
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
-    GEOCODER_USER_AGENT: str = "SmartCar/0.1 (fleet dispatch)"
+    GEOCODER_USER_AGENT: str = "EON-COLT/0.1 (fleet dispatch)"
     GEOCODE_RATE_SLEEP: float = 1.1   # 每次實查後等待秒數,遵守 Nominatim 速率限制
 
     # 圖霸 Map8(台灣本土,門牌級;需金鑰)
@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     # Web Push(VAPID)— 司機端推播;金鑰只放 .env
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
-    VAPID_SUBJECT: str = "mailto:admin@smartcar.local"
+    VAPID_SUBJECT: str = "mailto:admin@eon-colt.local"
 
     @property
     def push_enabled(self) -> bool:

@@ -21,7 +21,7 @@ from reportlab.platypus import (
 
 FONT = "CJK"
 pdfmetrics.registerFont(TTFont(FONT, "/Library/Fonts/Arial Unicode.ttf"))
-OUT = "/Users/ycchfx/AI實作/SmartCar/SmartCar_營運分析報告.pdf"
+OUT = "/Users/ycchfx/AI實作/EON_COLT/EON_COLT_營運分析報告.pdf"
 
 D = json.load(open("/tmp/ops_report_data.json", encoding="utf-8"))
 

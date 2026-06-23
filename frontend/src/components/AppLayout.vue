@@ -8,7 +8,7 @@ import { useAuthStore } from '../stores/auth'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const title = computed(() => route.meta.title || 'SmartCar')
+const title = computed(() => route.meta.title || 'EON COLT')
 
 // 路由切換後,關閉手機版側欄抽屜(若開著)
 watch(
@@ -67,7 +67,7 @@ const nav = computed(() =>
         >
           <span class="navbar-toggler-icon"></span>
         </button>
-        <span class="navbar-brand mb-0 h1">🚖 SmartCar</span>
+        <span class="navbar-brand mb-0 h1">🚖 EON COLT</span>
         <span class="navbar-text text-white-50 d-none d-sm-inline ms-2">{{ title }}</span>
         <div class="ms-auto d-flex align-items-center gap-2">
           <span class="navbar-text text-white small d-none d-sm-inline">👤 {{ auth.username }}</span>

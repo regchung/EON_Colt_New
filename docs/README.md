@@ -1,4 +1,4 @@
-# SmartCar 文件索引
+# EON COLT 文件索引
 
 專案文件總覽。**新進者建議閱讀順序**:`architecture.md` → `feature-overview.md` →
 `dispatch-principles.md` → `findings-calibration-2026-06-23.md`。

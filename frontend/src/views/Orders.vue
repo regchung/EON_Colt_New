@@ -34,7 +34,7 @@ async function downloadTemplate() {
   const url = URL.createObjectURL(data)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'smartcar_import_template.csv'
+  a.download = 'eon_colt_import_template.csv'
   document.body.appendChild(a)
   a.click()
   a.remove()

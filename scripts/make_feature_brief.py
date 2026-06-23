@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""產生「SmartCar 功能簡介」PDF(給車隊客戶/主管,商業白話、賣點導向)。
+"""產生「EON COLT 功能簡介」PDF(給車隊客戶/主管,商業白話、賣點導向)。
 
 內容為對外簡介(靜態),效益數字取自實證對比結果(220 營運日、13,534 真實趟)。
 """
@@ -17,7 +17,7 @@ from reportlab.platypus import (
 
 FONT = "CJK"
 pdfmetrics.registerFont(TTFont(FONT, "/Library/Fonts/Arial Unicode.ttf"))
-OUT = "/Users/ycchfx/AI實作/SmartCar/SmartCar_功能簡介.pdf"
+OUT = "/Users/ycchfx/AI實作/EON_COLT/EON_COLT_功能簡介.pdf"
 
 styles = getSampleStyleSheet()
 
@@ -58,7 +58,7 @@ def card(num, label, color):
 
 
 # ---------- 封面 ----------
-P("SmartCar 智慧派遣系統", title)
+P("EON COLT 智慧派遣系統", title)
 P("預約制長照接送車隊 — 功能簡介", sub)
 story.append(HRFlowable(width="100%", color=colors.HexColor("#0b5394"), thickness=1.5))
 gap(10)
@@ -116,9 +116,9 @@ t.setStyle(TableStyle([
 story.append(t)
 gap(10)
 
-# ---------- 為什麼選 SmartCar ----------
+# ---------- 為什麼選 EON COLT ----------
 story.append(KeepTogether([
-    Paragraph("為什麼選 SmartCar", h2),
+    Paragraph("為什麼選 EON COLT", h2),
     Paragraph("• <b>台灣在地化</b>:門牌級地理編碼、福祉/輪椅車種、長照平台匯入格式,開箱即用。", body),
     Paragraph("• <b>資料自主</b>:全套自架於自己的機房/雲,訂單與個資不外流第三方平台。", body),
     Paragraph("• <b>實證效益</b>:以真實營運紀錄回算,非模擬假設;省多少車、多少錢,數字看得到。", body),
@@ -134,7 +134,7 @@ story.append(KeepTogether([
 ]))
 gap(10)
 story.append(HRFlowable(width="100%", color=colors.HexColor("#cfd8e3"), thickness=0.8))
-P("SmartCar 智慧派遣系統 · 功能簡介。效益數字取自真實營運回算,供評估參考。", note)
+P("EON COLT 智慧派遣系統 · 功能簡介。效益數字取自真實營運回算,供評估參考。", note)
 
 doc.build(story)
 print("功能簡介已產生:", OUT)

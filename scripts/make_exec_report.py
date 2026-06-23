@@ -84,7 +84,7 @@ note = S("n", fontSize=9.5, leading=14, textColor=colors.grey)
 big = S("big", fontSize=23, leading=26, alignment=TA_CENTER, textColor=colors.white)
 biglbl = S("bl", fontSize=11, leading=14, alignment=TA_CENTER, textColor=colors.white)
 
-doc = SimpleDocTemplate("/Users/ycchfx/AI實作/SmartCar/SmartCar_管理報告.pdf",
+doc = SimpleDocTemplate("/Users/ycchfx/AI實作/EON_COLT/EON_COLT_管理報告.pdf",
                         pagesize=A4, topMargin=18 * mm, bottomMargin=16 * mm,
                         leftMargin=18 * mm, rightMargin=18 * mm)
 story = []
@@ -205,5 +205,5 @@ story.append(HRFlowable(width="100%", color=colors.HexColor("#cfd8e3"), thicknes
 P("本報告由智慧派遣系統依真實營運資料自動產生,供管理決策參考。", note)
 
 doc.build(story)
-print("管理報告已產生:/Users/ycchfx/AI實作/SmartCar/SmartCar_管理報告.pdf")
+print("管理報告已產生:/Users/ycchfx/AI實作/EON_COLT/EON_COLT_管理報告.pdf")
 print(f"  年省 {wan(sv['annual_saving_ntd'])} | 用車 ↓{g['saved_pct']}% | 共乘後合計年省 {wan(pool_annual)}")

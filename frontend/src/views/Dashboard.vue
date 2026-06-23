@@ -48,7 +48,7 @@ const cards = computed(() => [
   </div>
 
   <div class="alert alert-info mt-4 mb-0">
-    SmartCar 車隊派遣系統。支援 <strong>批次匯入</strong>、<strong>自動排班（VROOM）</strong>、
+    EON COLT 車隊派遣系統。支援 <strong>批次匯入</strong>、<strong>自動排班（VROOM）</strong>、
     <strong>路線地圖</strong> 與 <strong>動態重排</strong>。
   </div>
 </template>

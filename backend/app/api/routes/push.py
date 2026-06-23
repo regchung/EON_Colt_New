@@ -61,8 +61,8 @@ def test_push(body: TestIn, db: Session = Depends(get_db),
     if not settings.push_enabled:
         raise HTTPException(400, "未設定 VAPID 金鑰,推播停用")
     if body.driver_id is not None:
-        sent = push_svc.send_to_driver(db, body.driver_id, "SmartCar 測試推播",
+        sent = push_svc.send_to_driver(db, body.driver_id, "EON COLT 測試推播",
                                        "推播鏈路正常 ✓", url="/driver")
     else:
-        sent = push_svc.broadcast(db, "SmartCar 測試推播", "推播鏈路正常 ✓", url="/driver")
+        sent = push_svc.broadcast(db, "EON COLT 測試推播", "推播鏈路正常 ✓", url="/driver")
     return {"ok": True, "sent": sent}

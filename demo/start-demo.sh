@@ -6,7 +6,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-DUMP="demo/smartcar.dump"
+DUMP="demo/eon_colt.dump"
 
 echo "==> [1/6] 套用展示環境變數(demo/env.demo → .env)"
 if [ -f .env ] && [ ! -f .env.bak ]; then
@@ -19,22 +19,22 @@ ADMIN_PASS=$(grep -E '^ADMIN_PASSWORD=' .env | cut -d= -f2-)
 
 echo "==> [2/6] 啟動資料庫並等待就緒"
 docker compose up -d db
-until docker compose exec -T db pg_isready -U smartcar -d smartcar >/dev/null 2>&1; do
+until docker compose exec -T db pg_isready -U eon_colt -d eon_colt >/dev/null 2>&1; do
   sleep 1
 done
 
 echo "==> [3/6] 檢查是否需還原資料"
-HAS_ORDERS=$(docker compose exec -T db psql -U smartcar -d smartcar -tAc \
+HAS_ORDERS=$(docker compose exec -T db psql -U eon_colt -d eon_colt -tAc \
   "select to_regclass('public.orders') is not null" 2>/dev/null | tr -d '[:space:]' || echo "f")
 if [ "$HAS_ORDERS" = "t" ]; then
   echo "    已存在資料,跳過還原(要重置請先 demo/stop-demo.sh --wipe)"
 elif [ -f "$DUMP" ]; then
   echo "    還原 $DUMP …"
-  docker compose cp "$DUMP" db:/tmp/smartcar.dump
+  docker compose cp "$DUMP" db:/tmp/eon_colt.dump
   docker compose exec -T db pg_restore --no-owner --no-acl --clean --if-exists \
-    -d "postgresql://smartcar:smartcar_pw@localhost:5432/smartcar" /tmp/smartcar.dump || true
-  docker compose exec -T db rm -f /tmp/smartcar.dump || true
-  ROWS=$(docker compose exec -T db psql -U smartcar -d smartcar -tAc "select count(*) from orders" 2>/dev/null | tr -d '[:space:]')
+    -d "postgresql://eon_colt:eon_colt_pw@localhost:5432/eon_colt" /tmp/eon_colt.dump || true
+  docker compose exec -T db rm -f /tmp/eon_colt.dump || true
+  ROWS=$(docker compose exec -T db psql -U eon_colt -d eon_colt -tAc "select count(*) from orders" 2>/dev/null | tr -d '[:space:]')
   echo "    還原完成:orders=$ROWS"
 else
   echo "    ⚠️ 找不到 $DUMP — 將以空庫啟動(backend 會自動建表 + 種子 admin)。"

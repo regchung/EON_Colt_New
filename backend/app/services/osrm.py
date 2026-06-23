@@ -26,7 +26,7 @@ def distance_matrix(points: list[tuple[float, float]], profile: str = "driving")
     query = urllib.parse.urlencode({"annotations": "duration,distance"})
     url = f"{settings.OSRM_URL}/table/v1/{profile}/{coords}?{query}"
 
-    req = urllib.request.Request(url, headers={"User-Agent": "SmartCar/0.1"})
+    req = urllib.request.Request(url, headers={"User-Agent": "EON-COLT/0.1"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.load(resp)
@@ -50,7 +50,7 @@ def route_geometry(points: list[tuple[float, float]], profile: str = "driving") 
     coords = ";".join(f"{lng},{lat}" for lng, lat in points)
     query = urllib.parse.urlencode({"overview": "full", "geometries": "geojson"})
     url = f"{settings.OSRM_URL}/route/v1/{profile}/{coords}?{query}"
-    req = urllib.request.Request(url, headers={"User-Agent": "SmartCar/0.1"})
+    req = urllib.request.Request(url, headers={"User-Agent": "EON-COLT/0.1"})
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.load(resp)

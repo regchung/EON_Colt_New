@@ -18,16 +18,16 @@ jobs:
       postgres:
         image: postgres:16
         env:
-          POSTGRES_USER: smartcar
-          POSTGRES_PASSWORD: smartcar_pw
-          POSTGRES_DB: smartcar
+          POSTGRES_USER: eon_colt
+          POSTGRES_PASSWORD: eon_colt_pw
+          POSTGRES_DB: eon_colt
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U smartcar -d smartcar"
+          --health-cmd "pg_isready -U eon_colt -d eon_colt"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      DATABASE_URL: postgresql+psycopg://smartcar:smartcar_pw@localhost:5432/smartcar
+      DATABASE_URL: postgresql+psycopg://eon_colt:eon_colt_pw@localhost:5432/eon_colt
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

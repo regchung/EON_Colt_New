@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SmartCar VROOM demo 執行腳本
+# EON COLT VROOM demo 執行腳本
 # 用法:./run.sh
 # 需求:Docker。使用 VROOM 官方 binary 直接吃自帶矩陣的 input(不需 OSRM)。
 set -euo pipefail

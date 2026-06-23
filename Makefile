@@ -22,7 +22,7 @@ revision:
 	docker compose exec backend alembic revision --autogenerate -m "$(m)"
 
 psql:
-	docker compose exec db psql -U smartcar -d smartcar
+	docker compose exec db psql -U eon_colt -d eon_colt
 
 osrm-prepare:
 	./osrm/prepare.sh

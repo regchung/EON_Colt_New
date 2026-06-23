@@ -10,7 +10,7 @@ osrm/prepare.log
 
 .claude/
 demo/*.dump
-demo/smartcar-demo-bundle.zip
+demo/eon_colt-demo-bundle.zip
 .env.bak
 
 # 匯出含 PII 的訂單檔,勿入庫
@@ -19,3 +19,6 @@ demo/smartcar-demo-bundle.zip
 
 # 派遣報告(含真實乘客姓名,個資)
 reports/
+
+# 本機資料庫還原點(勿入庫)
+backups/

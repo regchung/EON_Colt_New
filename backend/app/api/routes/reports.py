@@ -142,7 +142,7 @@ def export_csv(
         ])
 
     buf.seek(0)
-    filename = f"smartcar_{date_from}_{date_to}.csv"
+    filename = f"eon_colt_{date_from}_{date_to}.csv"
     return StreamingResponse(
         iter([buf.getvalue().encode("utf-8-sig")]),  # utf-8-sig 讓 Excel 正確顯示中文
         media_type="text/csv",
