@@ -468,10 +468,15 @@ def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
     picks_by_vid: dict[int, list[int]] = {}
     stops_by_vid: dict[int, list[dict]] = {}   # 真實停靠序(交錯上/下車)+ 到點時刻
     if len(df):
+        has_wait = "waiting_time" in df.columns
         for _, step in df.iterrows():
             vid = int(step["vehicle_id"])
             typ = step["type"]
-            sec = int(step["arrival"]) if step["arrival"] == step["arrival"] else 0
+            # 到點時刻 = arrival + waiting(時間窗等待):上下車「實際發生」時刻,
+            # 非車輛提早到達時刻(否則早到等窗會誤顯示成提早上車、虛增在車時間)
+            arrival = int(step["arrival"]) if step["arrival"] == step["arrival"] else 0
+            wait = int(step["waiting_time"]) if (has_wait and step["waiting_time"] == step["waiting_time"]) else 0
+            sec = arrival + wait
             if typ == "start":
                 seq_by_vid.setdefault(vid, []).append(veh_se.get(vid, (None, None))[0])
             elif typ == "pickup":

@@ -16,3 +16,6 @@ demo/smartcar-demo-bundle.zip
 # 匯出含 PII 的訂單檔,勿入庫
 *.xlsx
 全部訂單_*.xlsx
+
+# 派遣報告(含真實乘客姓名,個資)
+reports/
