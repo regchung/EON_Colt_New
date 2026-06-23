@@ -32,6 +32,8 @@ DEFAULTS: list[dict] = [
      "label": "最長乘車時間倍率", "description": "乘客在車上時間上限 = 直達車程 × 此倍率 + 緩衝;防止共乘把人載太久(0 或留空=不限)"},
     {"key": "max_ride_grace_min", "value": "30", "value_type": "int", "group": "派遣規則",
      "label": "最長乘車緩衝(分)", "description": "乘車時間上限的固定加項;短程也允許一次併車繞路"},
+    {"key": "service_time_factor", "value": "1.0", "value_type": "float", "group": "派遣規則",
+     "label": "作業時間係數(省車鬆緊)", "description": "每趟作業時間 = 歷史校準 × 此係數。>1 較保守(省車率↓、貼近人工);<1 較積極(省車率↑)。與上車時間窗同為調整省車率的主旋鈕,不竄改校準真值"},
     {"key": "pool_require_consent", "value": "true", "value_type": "bool", "group": "共乘",
      "label": "共乘需同意", "description": "未同意者獨佔整車,不與他人併乘"},
     {"key": "pool_max_detour_min", "value": "15", "value_type": "float", "group": "共乘",
@@ -44,6 +46,12 @@ DEFAULTS: list[dict] = [
      "label": "每車日成本(NT$)", "description": "單車單日總成本(司機薪資+車輛攤提+油料保險),用於把省下車日換算成金額"},
     {"key": "annual_service_days", "value": "300", "value_type": "int", "group": "成本",
      "label": "年營運天數", "description": "每年實際出車天數,用於年化省下成本"},
+    {"key": "fixed_route_default_no_pool", "value": "true", "value_type": "bool", "group": "固定行程",
+     "label": "固定趟預設不可併", "description": "固定趟(校車/日照等)各釘各車,不與其他趟併乘"},
+    {"key": "fixed_route_multistop_buffer_min", "value": "30", "value_type": "int", "group": "固定行程",
+     "label": "固定趟多站緩衝(分)", "description": "估算固定趟佔用時間時,於頭尾直達車程外加的多站(中途上下車)緩衝;有實際佔用時間者以實際為準"},
+    {"key": "fixed_route_min_occupancy_min", "value": "40", "value_type": "int", "group": "固定行程",
+     "label": "固定趟佔用時間下限(分)", "description": "估算固定趟佔用時間的下限,避免短程被低估"},
 ]
 _DEFAULT_MAP = {d["key"]: d for d in DEFAULTS}
 
@@ -101,4 +109,14 @@ def dispatch_params(db: Session) -> dict:
         "pickup_window_min": get(db, "pickup_window_min", 30),
         "max_ride_factor": float(get(db, "max_ride_factor", 1.6) or 0),
         "max_ride_grace_sec": int(get(db, "max_ride_grace_min", 25) * 60),
+        "service_factor": float(get(db, "service_time_factor", 1.0) or 1.0),
+    }
+
+
+def fixed_route_params(db: Session) -> dict:
+    """固定行程(既定區塊)全域參數。"""
+    return {
+        "default_no_pool": bool(get(db, "fixed_route_default_no_pool", True)),
+        "multistop_buffer_min": int(get(db, "fixed_route_multistop_buffer_min", 30)),
+        "min_occupancy_min": int(get(db, "fixed_route_min_occupancy_min", 40)),
     }
