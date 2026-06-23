@@ -28,6 +28,10 @@ DEFAULTS: list[dict] = [
      "label": "司機前後出勤緩衝(分)", "description": "司機/車輛可在服務時段前後各提早/延後此分鐘出勤(如服務 06–18,司機可 05:30–18:30 出車去接 06:00 早單)"},
     {"key": "pickup_window_min", "value": "30", "value_type": "int", "group": "派遣規則",
      "label": "上車時間窗(分)", "description": "預約時間的容許彈性"},
+    {"key": "max_ride_factor", "value": "1.8", "value_type": "float", "group": "派遣規則",
+     "label": "最長乘車時間倍率", "description": "乘客在車上時間上限 = 直達車程 × 此倍率 + 緩衝;防止共乘把人載太久(0 或留空=不限)"},
+    {"key": "max_ride_grace_min", "value": "30", "value_type": "int", "group": "派遣規則",
+     "label": "最長乘車緩衝(分)", "description": "乘車時間上限的固定加項;短程也允許一次併車繞路"},
     {"key": "pool_require_consent", "value": "true", "value_type": "bool", "group": "共乘",
      "label": "共乘需同意", "description": "未同意者獨佔整車,不與他人併乘"},
     {"key": "pool_max_detour_min", "value": "15", "value_type": "float", "group": "共乘",
@@ -95,4 +99,6 @@ def dispatch_params(db: Session) -> dict:
         "max_work_sec": int(get(db, "max_work_hours", 8) * 3600),
         "require_consent": bool(get(db, "pool_require_consent", True)),
         "pickup_window_min": get(db, "pickup_window_min", 30),
+        "max_ride_factor": float(get(db, "max_ride_factor", 1.6) or 0),
+        "max_ride_grace_sec": int(get(db, "max_ride_grace_min", 25) * 60),
     }

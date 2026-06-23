@@ -25,6 +25,7 @@ from app.models.vehicle import Vehicle
 from app.services import fixed_route_match
 from app.services import matrix as matrix_svc
 from app.services import roster as roster_svc
+from app.services import calibration as calib_svc
 from app.services import settings as settings_svc
 
 DELIVERY_OFFSET = 1_000_000          # 用來區分 pickup/delivery 的 step id
@@ -40,6 +41,17 @@ PIN_SKILL_BASE = 20000              # 固定行程以「唯一技能」硬綁指
 
 
 TW = timezone(timedelta(hours=8))   # 台灣時區(資料庫存 UTC,排班以 +08 牆鐘換算)
+MIN_MAX_RIDE_SEC = 2400             # 最長乘車時間下限 40 分(短程也容一次併車繞路)
+
+
+def _max_ride_upper(direct_sec: int, pw_end: int, factor: float, grace_sec: int) -> int | None:
+    """下車時間窗上限 = 上車窗末 + 乘車上限;乘車上限 = max(下限, 直達車程×倍率 + 緩衝)。
+    factor<=0 或不可路由 → 回 None(不設上限)。用來防止 VROOM 把乘客在車上載過久。
+    """
+    if not factor or factor <= 0 or direct_sec >= UNROUTABLE:
+        return None
+    max_ride = max(MIN_MAX_RIDE_SEC, int(direct_sec * factor) + grace_sec)
+    return pw_end + max_ride
 
 
 def _secs_of_day(t: time) -> int:
@@ -233,6 +245,14 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             kwargs["start"], kwargs["end"] = veh_se[v.id]
         problem.add_vehicle(vroom.Vehicle(**kwargs))
 
+    # 每趟作業時間:依車行×福祉的歷史校準(無校準退回設定頁全域值)
+    svc_cal = calib_svc.service_map(db)
+    default_service_sec = prm["setup_sec"] + prm["teardown_sec"]
+
+    def _svc_split(o) -> tuple[int, int]:
+        sec = calib_svc.effective_service_sec(svc_cal, o.fleet, _is_welfare(o), default_service_sec)
+        return sec // 2, sec - sec // 2
+
     out_of_service = 0
     tasks_added = 0
     for o in orders:
@@ -249,13 +269,20 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             excl = 1
         else:
             excl = EXCL_CAP if (prm["require_consent"] and not o.allow_pool) else 1
+        setup_sec, teardown_sec = _svc_split(o)   # 每趟作業:歷史校準(車行×福祉)
         pickup = vroom.ShipmentStep(
-            id=o.id, location=p_idx, default_service=prm["setup_sec"],
+            id=o.id, location=p_idx, default_service=setup_sec,
             time_windows=[vroom.TimeWindow(pw_start, pw_end)],
         )
-        delivery = vroom.ShipmentStep(
-            id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=prm["teardown_sec"],
-        )
+        # 下車時間窗上限:限制乘客在車上的最長時間,避免共乘把人載一整天
+        deliv_upper = _max_ride_upper(
+            int(arr[p_idx][d_idx]), pw_end,
+            prm.get("max_ride_factor", 0), prm.get("max_ride_grace_sec", 0))
+        deliv_kw = dict(id=o.id + DELIVERY_OFFSET, location=d_idx,
+                        default_service=teardown_sec)
+        if deliv_upper is not None:
+            deliv_kw["time_windows"] = [vroom.TimeWindow(pw_start, deliv_upper)]
+        delivery = vroom.ShipmentStep(**deliv_kw)
         sk = {1} if _is_welfare(o) else set()
         if o.id in fixed_pins:
             sk.add(PIN_SKILL_BASE + fixed_pins[o.id])   # 固定行程:硬綁指定車
@@ -278,7 +305,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             location=ongoing_pts[o.id],
             delivery=vroom.Amount([max(1, o.pax or 1), excl]),
             skills=skills,
-            default_service=prm["teardown_sec"],
+            default_service=_svc_split(o)[1],   # 下車作業:歷史校準
             priority=100,  # 已在車上,務必完成下車
         ))
         tasks_added += 1

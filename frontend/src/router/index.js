@@ -8,6 +8,7 @@ import Addresses from '../views/Addresses.vue'
 import RouteMap from '../views/RouteMap.vue'
 import Reports from '../views/Reports.vue'
 import Comparison from '../views/Comparison.vue'
+import VehicleComparison from '../views/VehicleComparison.vue'
 import PoolSuggest from '../views/PoolSuggest.vue'
 import Users from '../views/Users.vue'
 import Settings from '../views/Settings.vue'
@@ -32,6 +33,7 @@ const routes = [
   { path: '/map', name: 'map', component: RouteMap, meta: { title: '路線地圖' } },
   { path: '/reports', name: 'reports', component: Reports, meta: { title: '報表' } },
   { path: '/comparison', name: 'comparison', component: Comparison, meta: { title: '人工 vs 自動' } },
+  { path: '/vehicle-comparison', name: 'vehicle-comparison', component: VehicleComparison, meta: { title: '逐車對比', roles: ['admin', 'dispatcher'] } },
   { path: '/daily-tasks', name: 'daily-tasks', component: DailyTasks, meta: { title: '車輛任務口卡', roles: ['admin', 'dispatcher'] } },
   { path: '/dispatch-board', name: 'dispatch-board', component: DispatchBoard, meta: { title: '派遣看板', roles: ['admin', 'dispatcher'] } },
   { path: '/unassigned', name: 'unassigned', component: Unassigned, meta: { title: '未派分析', roles: ['admin', 'dispatcher'] } },

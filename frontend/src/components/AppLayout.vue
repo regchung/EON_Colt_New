@@ -40,6 +40,7 @@ const allNav = [
   { to: '/map', label: '路線地圖', icon: '🗺️', roles: null },
   { to: '/reports', label: '報表', icon: '📈', roles: ['admin', 'dispatcher'] },
   { to: '/comparison', label: '人工 vs 自動', icon: '🆚', roles: ['admin', 'dispatcher'] },
+  { to: '/vehicle-comparison', label: '逐車對比', icon: '🚐', roles: ['admin', 'dispatcher'] },
   { to: '/unassigned', label: '未派分析', icon: '⚠️', roles: ['admin', 'dispatcher'] },
   { to: '/pool-suggest', label: '共乘建議', icon: '🤝', roles: ['admin', 'dispatcher'] },
   { to: '/assistant', label: 'AI 助理', icon: '💬', roles: ['admin', 'dispatcher'] },

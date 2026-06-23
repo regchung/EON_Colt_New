@@ -136,6 +136,42 @@ async function onDocFileChosen(e) {
   }
 }
 
+// --- 班表(人工派遣結果)匯入 ---
+const schedFileInput = ref(null)
+const schedImporting = ref(false)
+const schedReport = ref(null)
+
+function pickSchedFile() {
+  schedReport.value = null
+  schedFileInput.value?.click()
+}
+
+async function onSchedFileChosen(e) {
+  const file = e.target.files?.[0]
+  if (!file) return
+  if (!confirm(`匯入班表「${file.name}」?\n\n這會以班表為人工派遣結果,並「取代」班表內各服務日期既有的訂單與派遣紀錄(假單自動略過)。`)) {
+    e.target.value = ''
+    return
+  }
+  schedImporting.value = true
+  schedReport.value = null
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const { data } = await client.post('/history/import-schedule', fd, {
+      params: { replace_date: true },
+      timeout: 300000,
+    })
+    schedReport.value = data
+    await store.fetchAll()
+  } catch (err) {
+    schedReport.value = { error: err?.response?.data?.detail || err.message || '匯入失敗' }
+  } finally {
+    schedImporting.value = false
+    e.target.value = ''
+  }
+}
+
 // --- 地理編碼 ---
 const geocoding = ref(false)
 const geocodeReport = ref(null)
@@ -303,6 +339,10 @@ async function adoptVehicle(orderId, vehicleId) {
               title="上傳 PDF/Word/Excel/CSV,由 AI 抽取訂單(內容會送往 Claude)">
         {{ docImporting ? 'AI 解析中…' : '🤖 AI 文件匯入' }}
       </button>
+      <button class="btn btn-outline-dark" :disabled="schedImporting" @click="pickSchedFile"
+              title="上傳車隊『班表』(人工派遣結果),建訂單+人工派遣歷史供逐車對比;取代當日既有資料">
+        {{ schedImporting ? '班表匯入中…' : '📋 班表匯入' }}
+      </button>
       <button class="btn btn-outline-info" :disabled="geocoding" @click="runGeocode">
         {{ geocoding ? '編碼中…' : '地理編碼待處理' }}
       </button>
@@ -325,6 +365,36 @@ async function adoptVehicle(orderId, vehicleId) {
       class="d-none"
       @change="onDocFileChosen"
     />
+    <input
+      ref="schedFileInput"
+      type="file"
+      accept=".xlsx,.xls"
+      class="d-none"
+      @change="onSchedFileChosen"
+    />
+  </div>
+
+  <!-- 班表(人工派遣結果)匯入報告 -->
+  <div v-if="schedImporting" class="alert alert-dark py-2">
+    📋 班表匯入中…(逐列地理編碼,未命中地址簿者會打 Map8,請稍候)
+  </div>
+  <div v-if="schedReport" class="alert" :class="schedReport.error ? 'alert-danger' : 'alert-dark'">
+    <template v-if="schedReport.error">班表匯入失敗:{{ schedReport.error }}</template>
+    <template v-else>
+      <strong>班表匯入完成</strong>(服務日期 {{ (schedReport.dates || []).join('、') }}):
+      建立人工派遣 <span class="text-success fw-bold">{{ schedReport.imported }}</span> 筆,
+      略過假單 {{ schedReport.skipped_fake }} 筆;
+      取代既有訂單 {{ schedReport.deleted_orders }} / 派遣紀錄 {{ schedReport.deleted_history }} 筆。
+      地理編碼:命中 {{ schedReport.geocoded }}、未命中 <span :class="schedReport.geocode_miss ? 'text-danger' : ''">{{ schedReport.geocode_miss }}</span>;
+      新建車 {{ schedReport.vehicles_created }}、司機 {{ schedReport.drivers_created }}。
+      <span class="text-muted">→ 可至「🚐 逐車對比」檢視當日人工 vs 自動。</span>
+      <details v-if="schedReport.errors?.length" class="small mt-1">
+        <summary class="text-danger">略過/失敗 {{ schedReport.errors.length }} 筆(展開)</summary>
+        <ul class="mb-0">
+          <li v-for="(er, i) in schedReport.errors" :key="i">{{ er.row }}:{{ er.error }}</li>
+        </ul>
+      </details>
+    </template>
   </div>
 
   <!-- AI 文件匯入報告 -->

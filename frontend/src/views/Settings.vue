@@ -37,6 +37,26 @@ onMounted(load)
 
 function flash(msg) { toast.value = msg; setTimeout(() => { toast.value = '' }, 3000) }
 
+// --- 每趟工時 歷史校準 ---
+const cal = ref(null)
+const calLoading = ref(false)
+const calApplying = ref(false)
+async function loadCal() {
+  try { const { data } = await client.get('/dispatch/calibration'); cal.value = data } catch { /* 略過 */ }
+}
+async function applyCal() {
+  if (!confirm('重新從歷史校準每趟作業時間?會覆寫各車行校準值,並即時影響自動派遣與逐車對比。')) return
+  calApplying.value = true
+  try {
+    await client.post('/dispatch/calibration/apply')
+    await loadCal()
+    flash('已從歷史重新校準每趟工時')
+  } catch (e) {
+    error.value = e.response?.data?.detail || '校準失敗'
+  } finally { calApplying.value = false }
+}
+onMounted(loadCal)
+
 async function save(it) {
   savingKey.value = it.key
   try {
@@ -83,6 +103,44 @@ async function removeItem(it) {
 
   <div v-if="error" class="alert alert-danger">{{ error }}</div>
   <div v-if="toast" class="alert alert-success py-2">{{ toast }}</div>
+
+  <!-- 每趟工時:歷史校準(依車行×福祉/一般)-->
+  <div v-if="cal" class="card shadow-sm mb-3 border-info">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+      <span class="fw-semibold">🧪 每趟作業時間 — 歷史校準(依車行/福祉)</span>
+      <button class="btn btn-sm btn-outline-info" :disabled="calApplying" @click="applyCal">
+        <span v-if="calApplying" class="spinner-border spinner-border-sm me-1"></span>從歷史重新校準
+      </button>
+    </div>
+    <div class="card-body py-2">
+      <p class="small text-muted mb-2">
+        從歷史「背靠背連續趟」反推每趟真實上下車作業時間(已扣車程與調度空車),取代全域固定 40 分。
+        會隨距離變的車程由 OSRM 動態處理;區域(山區/都會)差異由「分車行各自校準」自動吸收;樣本不足者退回全域。
+        <span class="text-info">套用後即時影響自動派遣與逐車對比。</span>
+      </p>
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered align-middle mb-1">
+          <thead class="table-light"><tr>
+            <th>車行</th><th>一般單/趟(分)</th><th>福祉單/趟(分)</th><th>速度係數</th><th>樣本(趟對)</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="a in cal.applied" :key="a.fleet">
+              <td>{{ a.fleet === '*' ? '＊全域預設' : a.fleet }}</td>
+              <td>{{ a.service_normal_min }}</td>
+              <td>{{ a.service_welfare_min }}</td>
+              <td :class="{ 'text-warning': Math.abs(a.speed_factor - 1) > 0.05 }">{{ a.speed_factor }}</td>
+              <td class="text-muted">{{ a.samples.toLocaleString() }}</td>
+            </tr>
+            <tr v-if="!cal.applied.length"><td colspan="5" class="text-center text-muted">尚未校準,點右上角「從歷史重新校準」</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="small text-muted">
+        全域實證:一般 {{ cal.recommendation.global.normal_min }} 分、福祉 {{ cal.recommendation.global.welfare_min }} 分;
+        隱含車速 {{ cal.recommendation.global.speed_kmh }} km/h(樣本 {{ cal.recommendation.global.normal_samples + cal.recommendation.global.welfare_samples }} 趟對)。
+      </div>
+    </div>
+  </div>
 
   <!-- 新增 -->
   <div v-if="showNew" class="card shadow-sm mb-3"><div class="card-body">

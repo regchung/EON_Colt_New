@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.db.session import get_db
 from app.models.dispatch_comparison import DispatchComparison
 from app.models.dispatch_history import DispatchHistory
+from app.models.fleet_calibration import FleetCalibration
 from app.models.driver import Driver
 from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.order import Order
@@ -20,8 +21,8 @@ from app.models.unassigned_record import UnassignedRecord
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services import (
-    ai_dispatch, assistant, comparison, dispatcher, driver_affinity, forecast, matrix, osrm,
-    pool_suggest, recurring_pairs, zone_affinity,
+    ai_dispatch, assistant, calibration, comparison, dispatcher, driver_affinity, forecast,
+    matrix, osrm, pool_suggest, recurring_pairs, zone_affinity,
 )
 from app.services import settings as app_settings
 
@@ -361,6 +362,67 @@ def comparison_list(fleet: str | None = None, limit: int = 200, db: Session = De
     ]
 
 
+@router.get("/calibration")
+def calibration_view(db: Session = Depends(get_db)):
+    """每趟作業時間/速度的歷史校準:回傳目前已套用值 + 重新分析的建議值。"""
+    applied = [
+        {"fleet": r.fleet, "service_normal_min": round(r.service_normal_sec / 60, 1),
+         "service_welfare_min": round(r.service_welfare_sec / 60, 1),
+         "speed_factor": r.speed_factor, "samples": r.samples}
+        for r in db.scalars(select(FleetCalibration).order_by(FleetCalibration.fleet)).all()
+    ]
+    return {"applied": applied, "recommendation": calibration.analyze(db)}
+
+
+@router.post("/calibration/apply")
+def calibration_apply(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """重新從歷史校準每趟作業時間/速度,寫入 fleet_calibration(限登入)。"""
+    return calibration.apply(db)
+
+
+@router.get("/comparison/available-days")
+def comparison_available_days(db: Session = Depends(get_db)):
+    """可做逐車對比的(車行,日期):有成行單(done+座標)且有人工派遣紀錄(R 牌、已轉正式單)。
+    不依賴對比批次,匯入班表後當日即可選。
+    """
+    has_human = (
+        select(DispatchHistory.id)
+        .where(
+            DispatchHistory.fleet == Order.fleet,
+            DispatchHistory.service_date == Order.service_date,
+            DispatchHistory.status == "已轉至正式單",
+            DispatchHistory.plate.like("R%"),
+        )
+        .exists()
+    )
+    rows = db.execute(
+        select(Order.fleet, Order.service_date, func.count())
+        .where(Order.status == "done", Order.pickup_lng.is_not(None), has_human)
+        .group_by(Order.fleet, Order.service_date)
+        .order_by(Order.service_date.desc(), Order.fleet)
+    ).all()
+    return [
+        {"fleet": f, "service_date": sd.isoformat(), "n_orders": n}
+        for f, sd, n in rows
+    ]
+
+
+@router.get("/comparison/by-vehicle")
+def comparison_by_vehicle(
+    fleet: str,
+    service_date: date,
+    window_min: int = 30,
+    db: Session = Depends(get_db),
+):
+    """逐車對比:某車行某日,左=人工實際派遣、右=VROOM 自動派遣(同一車隊池)。
+    回傳每車並排趟次(標出換車的趟)+ 每車總行駛里程與工作時間。
+    """
+    r = comparison.compare_day_by_vehicle(db, fleet, service_date, window_min)
+    if r is None:
+        raise HTTPException(404, "當日無成行單或查無人工派遣紀錄")
+    return r
+
+
 @router.get("/osrm-health")
 def osrm_health():
     """探測自架 OSRM 是否就緒。"""
@@ -479,7 +541,10 @@ _REASON_LABEL = {
     "out_of_hours": "服務時段外(06:00–18:00 之外)",
     "no_welfare": "無福祉車可用",
     "unroutable": "地址/座標無法路由",
-    "infeasible": "車隊已滿載 / 時間窗無法排入",
+    "suspect_geocode": "座標離營運區過遠(疑地理編碼錯誤)",
+    "fleet_saturated": "全車隊滿載(需增車)",
+    "solver_margin": "求解邊際(仍有餘力,可重排)",
+    "infeasible": "車隊已滿載 / 時間窗無法排入",   # 舊碼,相容歷史紀錄
 }
 _FEEDBACK_CATS = [
     "司機可加班補位", "客戶可調整時間", "實際可共乘",

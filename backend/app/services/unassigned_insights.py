@@ -19,7 +19,10 @@ _REASON_LABEL = {
     "out_of_hours": "服務時段外(06:00–18:00 之外)",
     "no_welfare": "無福祉車可用",
     "unroutable": "地址/座標無法路由",
-    "infeasible": "車隊已滿載 / 時間窗無法排入",
+    "suspect_geocode": "座標離營運區過遠(疑地理編碼錯誤)",
+    "fleet_saturated": "全車隊滿載(需增車)",
+    "solver_margin": "求解邊際(仍有餘力,可重排)",
+    "infeasible": "車隊已滿載 / 時間窗無法排入",   # 舊碼,相容歷史紀錄
 }
 
 
@@ -69,6 +72,25 @@ def recommendations(agg: dict) -> list[dict]:
             "action": "修正地址/座標",
             "rationale": f"{r['unroutable']} 趟上/下車點無法路由;檢查地址簿座標或重新地理編碼。",
             "impact": r["unroutable"], "param": "address_book",
+        })
+    if r.get("suspect_geocode"):
+        recs.append({
+            "action": "校正疑似錯誤的地址座標",
+            "rationale": f"{r['suspect_geocode']} 趟上/下車座標離營運區過遠(疑地理編碼編到他縣市);"
+                         "校正地址簿座標即可恢復可派,非車隊問題。",
+            "impact": r["suspect_geocode"], "param": "address_book",
+        })
+    if r.get("fleet_saturated"):
+        recs.append({
+            "action": "增派尖峰車輛",
+            "rationale": f"{r['fleet_saturated']} 趟在全車隊滿載下排不進;該時段增派車輛可吸收。",
+            "impact": r["fleet_saturated"], "param": "fleet",
+        })
+    if r.get("solver_margin"):
+        recs.append({
+            "action": "重排或放寬上車窗(車隊仍有餘力)",
+            "rationale": f"{r['solver_margin']} 趟車隊仍有閒置/餘力、屬求解邊際;重排或放寬上車窗多可排入。",
+            "impact": r["solver_margin"], "param": "pickup_window_min",
         })
     # 行控回饋驅動(若已蒐集)
     fb_map = {

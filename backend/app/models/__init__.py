@@ -13,11 +13,12 @@ from app.models.shift import ShiftPattern, ShiftException
 from app.models.fixed_route import FixedRoute
 from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.pool_projection import PoolProjection
+from app.models.fleet_calibration import FleetCalibration
 
 __all__ = [
     "Vehicle", "Driver", "Order", "AddressPoint", "AddressAlias",
     "RouteStop", "User", "DispatchHistory", "DispatchComparison",
     "UnassignedRecord", "PushSubscription", "AppSetting",
     "ShiftPattern", "ShiftException", "FixedRoute",
-    "DriverVehicleAssignment", "PoolProjection",
+    "DriverVehicleAssignment", "PoolProjection", "FleetCalibration",
 ]
