@@ -30,7 +30,13 @@ const TIME_SLOTS = ['全天', '早', '午', '午後', '早晚']
 const MATCH_FIELDS = [
   { v: 'any', t: '任意欄位' }, { v: 'passenger', t: '乘客姓名' }, { v: 'address', t: '地址/補充' },
 ]
-const blank = () => ({ id: null, label: '', keyword: '', match_name: '', driver_name: '', time_slot: '全天', match_field: 'any', fleet: '', note: '', active: true })
+const blank = () => ({
+  id: null, label: '', keyword: '', match_name: '', driver_name: '', time_slot: '全天',
+  match_field: 'any', fleet: '', note: '', active: true,
+  // 既定區塊維護參數(留空則沿用參數設定的預設/估算)
+  pickup_address: '', dropoff_address: '', plate: '', start_time: '',
+  occupancy_min: null, pax: 1, vehicle_type: 'normal', wheelchair: 0, allow_pool: false,
+})
 const form = ref(blank())
 
 function flash(m) { toast.value = m; setTimeout(() => { toast.value = '' }, 3000) }
@@ -42,7 +48,13 @@ async function load() {
 onMounted(load)
 
 function edit(r) {
-  form.value = { ...r, keyword: r.keyword || '', match_name: r.match_name || '', fleet: r.fleet || '', note: r.note || '' }
+  form.value = {
+    ...r, keyword: r.keyword || '', match_name: r.match_name || '', fleet: r.fleet || '', note: r.note || '',
+    pickup_address: r.pickup_address || '', dropoff_address: r.dropoff_address || '',
+    plate: r.plate || '', start_time: r.start_time || '',
+    occupancy_min: r.occupancy_min ?? null, pax: r.pax ?? 1,
+    vehicle_type: r.vehicle_type || 'normal', wheelchair: r.wheelchair ?? 0, allow_pool: !!r.allow_pool,
+  }
   window.scrollTo({ top: 0, behavior: 'smooth' })
 }
 function reset() { form.value = blank() }
@@ -60,6 +72,16 @@ async function save() {
     match_name: form.value.match_name.trim() || null, driver_name: form.value.driver_name,
     time_slot: form.value.time_slot, match_field: form.value.match_field,
     fleet: form.value.fleet || null, note: form.value.note || null, active: form.value.active,
+    pickup_address: form.value.pickup_address?.trim() || null,
+    dropoff_address: form.value.dropoff_address?.trim() || null,
+    plate: form.value.plate?.trim() || null,
+    start_time: form.value.start_time?.trim() || null,
+    occupancy_min: (form.value.occupancy_min === '' || form.value.occupancy_min === null)
+      ? null : Number(form.value.occupancy_min),
+    pax: Number(form.value.pax) || 1,
+    vehicle_type: form.value.vehicle_type || 'normal',
+    wheelchair: Number(form.value.wheelchair) || 0,
+    allow_pool: !!form.value.allow_pool,
   }
   try {
     if (form.value.id) await client.put(`/fixed-routes/${form.value.id}`, body)
@@ -106,6 +128,30 @@ async function del(r) {
       <div class="col-6 col-md-2 d-flex align-items-end">
         <div class="form-check"><input v-model="form.active" type="checkbox" class="form-check-input" id="act" />
           <label class="form-check-label small" for="act">啟用</label></div></div>
+
+      <!-- 既定區塊維護參數(固定趟;留空則沿用參數設定的預設/估算)-->
+      <div class="col-12"><hr class="my-1" />
+        <span class="small text-muted">既定區塊參數(固定趟用;留空 = 沿用「參數設定」的預設/估算)</span></div>
+      <div class="col-6 col-md-3"><label class="form-label small mb-0">起點地址</label>
+        <input v-model="form.pickup_address" class="form-control form-control-sm" placeholder="鶯歌區永智街39號" /></div>
+      <div class="col-6 col-md-3"><label class="form-label small mb-0">迄點地址</label>
+        <input v-model="form.dropoff_address" class="form-control form-control-sm" placeholder="林口區文化北路一段425號" /></div>
+      <div class="col-6 col-md-2"><label class="form-label small mb-0">指定車牌</label>
+        <input v-model="form.plate" class="form-control form-control-sm" placeholder="RCE-2700" /></div>
+      <div class="col-6 col-md-2"><label class="form-label small mb-0">起始時段</label>
+        <input v-model="form.start_time" class="form-control form-control-sm" placeholder="06:00" /></div>
+      <div class="col-6 col-md-2"><label class="form-label small mb-0">佔用時間(分)</label>
+        <input v-model="form.occupancy_min" type="number" min="0" class="form-control form-control-sm" placeholder="留空=估算" /></div>
+      <div class="col-6 col-md-2"><label class="form-label small mb-0">乘客數</label>
+        <input v-model="form.pax" type="number" min="1" class="form-control form-control-sm" /></div>
+      <div class="col-6 col-md-2"><label class="form-label small mb-0">車型</label>
+        <select v-model="form.vehicle_type" class="form-select form-select-sm">
+          <option value="normal">一般</option><option value="welfare">福祉</option></select></div>
+      <div class="col-6 col-md-2"><label class="form-label small mb-0">輪椅數</label>
+        <input v-model="form.wheelchair" type="number" min="0" class="form-control form-control-sm" /></div>
+      <div class="col-6 col-md-2 d-flex align-items-end">
+        <div class="form-check"><input v-model="form.allow_pool" type="checkbox" class="form-check-input" id="apool" />
+          <label class="form-check-label small" for="apool">可與他趟併</label></div></div>
       <div class="col-6 col-md-2 d-flex align-items-end gap-2">
         <button class="btn btn-sm btn-primary" @click="save">{{ form.id ? '更新' : '新增' }}</button>
         <button v-if="form.id" class="btn btn-sm btn-outline-secondary" @click="reset">取消</button></div>

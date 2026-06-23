@@ -5,7 +5,7 @@
 """
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -24,6 +24,17 @@ class FixedRoute(Base):
     fleet: Mapped[str | None] = mapped_column(String(20))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     note: Mapped[str | None] = mapped_column(String(200))
+
+    # --- 既定區塊維護欄位(固定趟參數;供產生當日委派/對比釘車)---
+    pickup_address: Mapped[str | None] = mapped_column(Text)     # 起點地址
+    dropoff_address: Mapped[str | None] = mapped_column(Text)    # 迄點/目的地地址
+    plate: Mapped[str | None] = mapped_column(String(20))        # 指定車牌(空則由司機解出)
+    start_time: Mapped[str | None] = mapped_column(String(5))    # 起始時段 "HH:MM"
+    occupancy_min: Mapped[int | None] = mapped_column(Integer)   # 整趟佔用時間(分);空則用 settings 估算
+    pax: Mapped[int] = mapped_column(Integer, default=1)         # 乘客數(座位需求)
+    vehicle_type: Mapped[str] = mapped_column(String(10), default="normal")  # normal|welfare
+    wheelchair: Mapped[int] = mapped_column(Integer, default=0)  # 輪椅數
+    allow_pool: Mapped[bool] = mapped_column(Boolean, default=False)  # 預設不可併(各釘各車)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), onupdate=func.now())

@@ -15,15 +15,59 @@ from datetime import date, timezone, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.fixed_route import FixedRoute
 from app.models.order import Order
 from app.models.vehicle import Vehicle
-from app.services import fixed_route_match, settings as settings_svc
+from app.services import fixed_route_match, geocode as geocode_svc, settings as settings_svc
 from app.services import matrix as matrix_svc
 
 TW = timezone(timedelta(hours=8))
 DAY_START = 6 * 3600
 DAY_END = 18 * 3600
 TRANSFER_SLACK = 300   # 銜接容許誤差 5 分
+
+
+def effective_occupancy_min(db: Session, fr: FixedRoute) -> int:
+    """固定趟整趟佔用時間(分)。
+
+    逐條規則的 occupancy_min 優先(行控於維護頁設定);未設則以參數設定估算:
+    max(佔用下限, OSRM 頭尾直達車程 + 多站緩衝)。
+    """
+    P = settings_svc.fixed_route_params(db)
+    if fr.occupancy_min:
+        return fr.occupancy_min
+    occ = P["min_occupancy_min"]
+    if fr.pickup_address and fr.dropoff_address:
+        p = geocode_svc.geocode(db, fr.pickup_address)
+        d = geocode_svc.geocode(db, fr.dropoff_address)
+        if p.found and d.found:
+            try:
+                direct = matrix_svc.build_matrix(
+                    [(p.lng, p.lat), (d.lng, d.lat)])["durations"][0][1] or 0
+                occ = max(P["min_occupancy_min"], round(direct / 60) + P["multistop_buffer_min"])
+            except Exception:  # noqa: BLE001
+                pass
+    return occ
+
+
+def resolve_params(db: Session, fr: FixedRoute) -> dict:
+    """回傳固定行程「生效參數」:逐條值優先,缺項回退參數設定的預設。
+
+    供維護頁顯示生效值、與「產生當日既定區塊」共用同一套覆寫→預設邏輯。
+    """
+    return {
+        "occupancy_min": effective_occupancy_min(db, fr),
+        "occupancy_source": "route" if fr.occupancy_min else "settings_estimate",
+        "allow_pool": bool(fr.allow_pool),     # 預設 False(對應 fixed_route_default_no_pool)
+        "pax": fr.pax or 1,
+        "vehicle_type": fr.vehicle_type or "normal",
+        "wheelchair": fr.wheelchair or 0,
+        "plate": fr.plate,
+        "driver_name": fr.driver_name,
+        "pickup_address": fr.pickup_address,
+        "dropoff_address": fr.dropoff_address,
+        "start_time": fr.start_time,
+    }
 
 
 def _secs(dt) -> int:
