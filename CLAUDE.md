@@ -113,10 +113,10 @@ migration 已到 `0026`;表:vehicles / drivers / orders / address_point / addres
 ／**fleet_calibration**(車行×福祉每趟工時 + 速度係數,歷史校準[0026])。
 vehicles 新增 `start_lng/lat`·`end_lng/lat`、**`suspended`(停派)**、**`wheelchair`(可載輪椅數)**;
 drivers 新增 **`suspended`(停派)**;orders 新增 `pool_consent_at`/`pool_consent_by`、`case_tag`(個案/地標標籤)。
-規劃/原則文件見 `docs/dispatch-principles.md`(派遣原則,含原則7/8)、
-**`docs/findings-calibration-2026-06-23.md`(工時校準發現報告)**、`docs/effectiveness-2026-06-22.md`(效益,↓18.7%舊基準)、
-`docs/deploy-railway-checklist.md`(部署)、`docs/eval-docling-tenancy-timefold.md`、`docs/research-domains.md`、
-`docs/self-build-roadmap.md`、`docs/data-overview-and-optimization.md`。
+**文件索引見 `docs/README.md`**(分類 + 狀態旗標)。重點:`docs/dispatch-principles.md`(派遣原則,含原則7/8)、
+**`docs/findings-calibration-2026-06-23.md`(工時校準發現報告,最新效益權威)**、
+`docs/feature-overview.md`(功能總覽)、`docs/effectiveness-2026-06-22.md`(↓18.7%舊基準,已被取代)、
+`docs/deploy-railway-checklist.md`(部署)、`docs/self-build-roadmap.md`(規劃)。
 
 > **最新全量對比(2025-03~2026-01,563 車行-日、36,370 趟,工時校準+乘車上限後)**:
 > 人工 **7,371 → 自動 4,723 車日(↓35.9%)**,省 2,648 車日 ≈ NT$1,006 萬/期間(年化 ~1,135 萬@3,800/車日);

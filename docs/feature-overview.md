@@ -22,6 +22,8 @@
 ### 1. 訂單與匯入
 - 訂單 CRUD;批次匯入 Excel/CSV/PDF(SSE 進度 + 自動地理編碼)。
 - **長照平台歷史匯入**(`history_import`):去識別化(不存身分證)、自建車/司機、灌地址簿座標。
+- **班表匯入**(`schedule_import`):人工派遣結果檔(民國日期、地址簿優先地理編碼、假單略過、取代當日)
+  → 建 done 訂單 + SERVED 派遣歷史,供逐車對比/成效分析。
 - **AI 文件智慧匯入**(`doc_ingest`):PDF/Word/Excel/CSV → Claude 抽單 → 建單。
 - 個案標籤 `case_tag`(姓名+地址補充+醫療設施名稱),供固定行程匹配。
 
@@ -32,7 +34,10 @@
 ### 3. 智慧派遣(核心)
 - **VROOM 一鍵排班**:每張單 = shipment(上車→下車配對)、2 維容量(座位 + 共乘同意佔位)、
   車種/輪椅技能、時間窗、車輛起訖點錨定。
-- **司機營運規則**:每趟前後置 40 分、8h 工時上限、06–18 服務時段、**完成緩衝**(時段內上車可延後完成)。
+- **司機營運規則**:8h 工時上限、06–18 服務時段、**完成緩衝**(時段內上車可延後完成)。
+- **每趟工時歷史校準**(`calibration` + `fleet_calibration`):依**車行×福祉**從歷史「背靠背連續趟」
+  反推每趟真實作業(全域一般 19.4/福祉 21.5 分),取代全域固定 40 分;樣本不足退全域;速度係數 ~1.0。
+- **最長乘車時間上限**:下車窗 ≤ 上車窗末 + max(40分, 直達×1.8+30分),防共乘把乘客久載。
 - **動態重排**:取消/開始/完成;**ongoing 硬鎖原車**(唯一技能,非 steps)。
 - **路線地圖**:Map8 圖磚 + OSRM 路線 + 站點。
 
@@ -59,7 +64,8 @@
 ### 8. 行控工具
 - **拖放派遣看板**(`dispatch_board`):依車行→車→時間,原生拖放改派 + 時間衝突標紅。
 - **車輛任務口卡**(`daily-tasks`):依日期/車行/車牌過濾,可列印給司機。
-- **未派分析**(`unassigned_record`):依日歸類、推斷原因(時段外/無福祉車/無法路由/滿載)、
+- **未派分析**(`unassigned_record`):依日歸類、**可行動原因**(時段外/無福祉車/無法路由/
+  座標疑誤 suspect_geocode/全車隊滿載 fleet_saturated/求解邊際 solver_margin)、
   行控填回饋;**AI 改善建議**(`unassigned_insights`)聚合原因×回饋 → 規則建議 + Claude 白話方案。
 
 ### 9. AI 功能
@@ -70,25 +76,29 @@
 ### 10. 報表與效益分析
 - 營運報表 + CSV 匯出 + 區間趨勢圖(零依賴 SVG)。
 - **人工 vs 自動對比**(`comparison`):省下車日 → NT$、時間窗敏感度。
+- **逐車對比**(`compare_day_by_vehicle` + `VehicleComparison.vue`):某日某車行,同一組實體車牌
+  左人工/右自動**並排**,標換車/換入、顯示**真實停靠序**(交錯上/下車 + 實際到點 + 在車人數)、
+  駕駛+乘客名、每車總里程/工時。`/comparison/available-days` 供日期選單(不依賴批次)。
 - PDF 報告產生器:技術版 / 管理版 / 營運分析(含尖峰壅塞情報)。
 
 ### 11. 系統管理
 - 多角色(admin / dispatcher / driver)+ 使用者管理。
 - 系統參數設定(`app_settings`,即時派遣讀取;前端「參數設定」頁,未儲存提示)。
 
-## 資料表(15)
+## 資料表(16,migration 0026)
 vehicles / drivers / orders / users / address_point / address_alias / route_stop /
 dispatch_history / dispatch_comparison / pool_projection / app_settings /
 shift_pattern · shift_exception / unassigned_record / fixed_route /
-driver_vehicle_assignment / push_subscription
+driver_vehicle_assignment / push_subscription / **fleet_calibration**(車行×福祉每趟工時+速度係數)
 
-## 實證效益(220 營運日、13,534 真實趟,納入司機實務約束)
-- 集團用車 **↓18.6%**(7,328 → 5,967 車日);推共乘合計 **↓25.5%**。
-- 年化省約 **NT$ 585 萬**(@NT$3,800/車日);共乘後合計約 NT$ 805 萬。
+## 實證效益(563 車行-日、36,370 真實趟,工時校準 + 乘車上限後)
+- 集團用車 **↓35.9%**(人工 7,371 → 自動 4,723 車日,省 2,648);563 天中 **511 更省/52 打平/0 落敗**。
+- 年化省約 **NT$ 1,135 萬**(@NT$3,800/車日);未派 15(0.04%)。
+- 詳見 `findings-calibration-2026-06-23.md`(此為工時校準後的真實值;舊 ↓18.7% 因固定 40 分工時高估,屬保守下限)。
 
 ## 工程品質
 - GitHub Actions CI:pytest(postgres) + 前端 build + Docker 映像,**綠燈**。
-- 56 passed;`alembic check` 乾淨(防漂移閘門)。
+- 82 passed;`alembic check` 乾淨(防漂移閘門)。
 - 全鏈時區一致 +08;機密只放 `.env`(gitignored)。
 
 ## 護城河 / 不做什麼
