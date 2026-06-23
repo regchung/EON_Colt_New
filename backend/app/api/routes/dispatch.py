@@ -1,7 +1,10 @@
 """派遣相關端點(本階段:距離矩陣引擎驗證;下一步:VROOM 排班)。"""
 from datetime import date, datetime, timezone
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -21,8 +24,8 @@ from app.models.unassigned_record import UnassignedRecord
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services import (
-    ai_dispatch, assistant, calibration, comparison, dispatcher, driver_affinity, forecast,
-    matrix, osrm, pool_suggest, recurring_pairs, zone_affinity,
+    ai_dispatch, assistant, calibration, comparison, dispatch_export, dispatcher,
+    driver_affinity, forecast, matrix, osrm, pool_suggest, recurring_pairs, zone_affinity,
 )
 from app.services import settings as app_settings
 
@@ -43,6 +46,21 @@ def run(service_date: date, ai: bool = False, db: Session = Depends(get_db)):
     if ai:
         result["ai_summary"] = ai_dispatch.analyze_dispatch(result)
     return result
+
+
+@router.get("/export")
+def export_dispatch(service_date: date, fleet: str | None = None, layout: str = "single",
+                    db: Session = Depends(get_db)):
+    """匯出某日派遣表(Excel)。fleet 空=全車行;layout=single(單檔多分頁)|per_vehicle(每車一張工作表)。"""
+    data = dispatch_export.build_workbook(
+        db, service_date, (fleet or None), per_vehicle=(layout == "per_vehicle"))
+    suffix = "每車表" if layout == "per_vehicle" else "總表"
+    name = f"EON_COLT_派遣_{service_date.isoformat()}_{fleet or '全車行'}_{suffix}.xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
+    )
 
 
 @router.post("/zone-suggest")

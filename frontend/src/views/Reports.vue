@@ -25,6 +25,41 @@ async function load() {
 }
 onMounted(load)
 
+// --- 派遣表匯出(挑日期 + 車行 + 版型)---
+const fleets = ref([])
+const expDate = ref(today)
+const expFleet = ref('')          // '' = 全車行
+const expLayout = ref('single')   // single | per_vehicle
+const expLoading = ref(false)
+async function loadFleets() {
+  try {
+    const { data: m } = await client.get('/dispatch/daily-tasks/meta')
+    fleets.value = m.fleets || []
+    if (m.max_date) expDate.value = m.max_date
+  } catch { /* 略過 */ }
+}
+onMounted(loadFleets)
+async function exportDispatch() {
+  expLoading.value = true
+  try {
+    const res = await client.get('/dispatch/export', {
+      params: { service_date: expDate.value, fleet: expFleet.value || undefined, layout: expLayout.value },
+      responseType: 'blob',
+    })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    const tag = expLayout.value === 'per_vehicle' ? '每車表' : '總表'
+    a.download = `EON_COLT_派遣_${expDate.value}_${expFleet.value || '全車行'}_${tag}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (e) {
+    alert(e.response?.data?.detail || '匯出失敗')
+  } finally {
+    expLoading.value = false
+  }
+}
+
 async function exportCsv() {
   const res = await client.get('/reports/export-csv', {
     params: { date_from: dateFrom.value, date_to: dateTo.value },
@@ -56,6 +91,43 @@ const rateSeries = computed(() => [
 </script>
 
 <template>
+  <!-- 派遣表匯出 -->
+  <div class="card shadow-sm mb-3 border-primary">
+    <div class="card-header py-2 fw-semibold">📊 派遣表匯出（Excel）</div>
+    <div class="card-body">
+      <div class="row g-2 align-items-end">
+        <div class="col-6 col-md-3">
+          <label class="form-label mb-1 small">日期</label>
+          <input v-model="expDate" type="date" class="form-control form-control-sm" />
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label mb-1 small">車行</label>
+          <select v-model="expFleet" class="form-select form-select-sm">
+            <option value="">全車行</option>
+            <option v-for="f in fleets" :key="f" :value="f">{{ f }}</option>
+          </select>
+        </div>
+        <div class="col-12 col-md-4">
+          <label class="form-label mb-1 small d-block">版型</label>
+          <div class="btn-group btn-group-sm" role="group">
+            <input v-model="expLayout" type="radio" class="btn-check" id="lay1" value="single" />
+            <label class="btn btn-outline-primary" for="lay1">所有資料一個檔(多分頁)</label>
+            <input v-model="expLayout" type="radio" class="btn-check" id="lay2" value="per_vehicle" />
+            <label class="btn btn-outline-primary" for="lay2">每車一張工作表</label>
+          </div>
+        </div>
+        <div class="col-12 col-md-2">
+          <button class="btn btn-sm btn-primary w-100" :disabled="expLoading" @click="exportDispatch">
+            <span v-if="expLoading" class="spinner-border spinner-border-sm me-1"></span>⬇ 產生 Excel
+          </button>
+        </div>
+      </div>
+      <div class="small text-muted mt-2">
+        「所有資料一個檔」= 總覽/各子車隊/每車排班/派車明細/未派 五分頁;「每車一張工作表」= 每台車獨立派車單 + 總覽。
+      </div>
+    </div>
+  </div>
+
   <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
     <div><label class="form-label mb-1 small">起</label>
       <input v-model="dateFrom" type="date" class="form-control form-control-sm" style="width:160px" /></div>
