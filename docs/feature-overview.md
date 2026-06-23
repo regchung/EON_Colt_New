@@ -2,7 +2,7 @@
 
 > 取代人工派遣的**預約制長照接送車隊系統**。車行批次匯入預約單 → 地理編碼 →
 > VROOM 自動排班(福祉車/共乘/時間窗)→ 地圖呈現 → 當天動態重排。**全套自架於 Docker**。
-> 規模:18 路由模組 / 26 服務模組 / 15 資料表 / 20 前端頁 / migration 至 0023。
+> 規模:18 路由模組 / 27 服務模組 / 19 資料表 / 20 前端頁 / migration 至 0028。
 
 ## 技術棧
 | 層 | 選用 |
@@ -75,6 +75,8 @@
 
 ### 10. 報表與效益分析
 - 營運報表 + CSV 匯出 + 區間趨勢圖(零依賴 SVG)。
+- **派遣表 Excel 匯出**(`dispatch_export` + `/dispatch/export`):挑日期 + 車行 + 版型
+  (單檔多分頁:總覽/各子車隊/每車排班/派車明細/未派 ‧ 或 每車一張工作表);報表頁操作。
 - **人工 vs 自動對比**(`comparison`):省下車日 → NT$、時間窗敏感度。
 - **逐車對比**(`compare_day_by_vehicle` + `VehicleComparison.vue`):某日某車行,同一組實體車牌
   左人工/右自動**並排**,標換車/換入、顯示**真實停靠序**(交錯上/下車 + 實際到點 + 在車人數)、
@@ -84,8 +86,15 @@
 ### 11. 系統管理
 - 多角色(admin / dispatcher / driver)+ 使用者管理。
 - 系統參數設定(`app_settings`,即時派遣讀取;前端「參數設定」頁,未儲存提示)。
+  含 **`service_time_factor`(省車鬆緊主旋鈕,校準×係數)** 與固定行程全域參數。
 
-## 資料表(16,migration 0026)
+### 12. 固定趟既定區塊(committed blocks)
+- 固定趟(校車/日照/洗腎等)= 已談妥委派:`orders.occupancy_min` 有值即**釘指定車、整趟佔用時間計、
+  各釘各車不互併**(原則9);正常單在其空檔最佳化。修掉「固定趟被當散單亂併」。
+- 固定行程逐條維護參數(`fixed_route`:起迄/車牌/起始時段/佔用/乘客數/車型/輪椅/可併),
+  缺項回退參數設定(`fixed_route_blocks.resolve_params`)。
+
+## 資料表(19,migration 0028)
 vehicles / drivers / orders / users / address_point / address_alias / route_stop /
 dispatch_history / dispatch_comparison / pool_projection / app_settings /
 shift_pattern · shift_exception / unassigned_record / fixed_route /
