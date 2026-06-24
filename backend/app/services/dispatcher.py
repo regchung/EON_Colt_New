@@ -276,15 +276,22 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             excl = 1
         else:
             excl = EXCL_CAP if (prm["require_consent"] and not o.allow_pool) else 1
-        setup_sec, teardown_sec = _svc_split(o)   # 每趟作業:歷史校準(車行×福祉)
+        if o.occupancy_min:
+            # 既定區塊(固定趟):以整趟佔用時間為服務時長 → 佔住司機整個時段,期間不插單;
+            # 不設最長乘車上限。佔用時間用維護/來源值(如校車服務分鐘 180)。
+            total = o.occupancy_min * 60
+            setup_sec, teardown_sec = total // 2, total - total // 2
+            deliv_upper = None
+        else:
+            setup_sec, teardown_sec = _svc_split(o)   # 每趟作業:歷史校準(車行×福祉)
+            # 下車時間窗上限:限制乘客在車上的最長時間,避免共乘把人載一整天
+            deliv_upper = _max_ride_upper(
+                int(arr[p_idx][d_idx]), pw_end,
+                prm.get("max_ride_factor", 0), prm.get("max_ride_grace_sec", 0))
         pickup = vroom.ShipmentStep(
             id=o.id, location=p_idx, default_service=setup_sec,
             time_windows=[vroom.TimeWindow(pw_start, pw_end)],
         )
-        # 下車時間窗上限:限制乘客在車上的最長時間,避免共乘把人載一整天
-        deliv_upper = _max_ride_upper(
-            int(arr[p_idx][d_idx]), pw_end,
-            prm.get("max_ride_factor", 0), prm.get("max_ride_grace_sec", 0))
         deliv_kw = dict(id=o.id + DELIVERY_OFFSET, location=d_idx,
                         default_service=teardown_sec)
         if deliv_upper is not None:
