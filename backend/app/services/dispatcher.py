@@ -38,6 +38,41 @@ MAX_WORK_SEC = 8 * 3600              # 每車每日工時上限 8h(行車+服務
 EXCL_CAP = 100                       # 「不共乘」維度容量;未同意共乘者佔滿 → 獨佔整車
 LOCK_SKILL_BASE = 10000              # ongoing 訂單以「唯一技能」硬鎖原車(避開福祉 skill=1)
 PIN_SKILL_BASE = 20000              # 固定行程以「唯一技能」硬綁指定車
+FLEET_SKILL_BASE = 30000            # 車隊隔離:區域技能(fleet_isolation 開啟時用)
+
+# 車隊隔離(fleet_isolation):把訂單/車輛歸到「區域」,車只服務相容區域的單。
+# 台北車→台北+雙北單;新北車→新北+雙北單;不拘雙北車→兩者;神同行/基隆各自獨立。
+# 校車/日照/發隆興/樂格適/不拘【雙北】= 雙北(台北或新北皆可執行)。
+_FLEET_REGION = {
+    "台北": "台北", "新北": "新北", "神同行": "神同行",
+    "基隆": "基隆", "不拘【基隆】": "基隆",
+    "校車": "雙北", "日照": "雙北", "發隆興": "雙北", "樂格適": "雙北", "不拘【雙北】": "雙北",
+}
+# 只硬隔離「台北 / 新北」兩區;其餘(神同行/基隆/校車/日照/不拘=雙北)不限區,
+# 由地理自然歸位,各區池滿時可跨區承接(= 對小車隊的天然 fallback)。
+_ISO_IDX = {"台北": 0, "新北": 1}
+
+
+def _region_of(fleet: str | None) -> str:
+    return _FLEET_REGION.get((fleet or "").strip(), "雙北")
+
+
+def _order_fleet_skills(fleet: str | None) -> set:
+    """訂單需要的區域技能:只有台北/新北單有(限該區車);其餘單不限區(空集)。"""
+    reg = _region_of(fleet)
+    return {FLEET_SKILL_BASE + _ISO_IDX[reg]} if reg in _ISO_IDX else set()
+
+
+def _vehicle_fleet_skills(home_fleet: str | None) -> set:
+    """車輛帶有的台北/新北服務技能;不拘雙北車兩者皆可;小車隊/其他不帶(僅服務不限區單)。"""
+    reg = _region_of(home_fleet)
+    if reg == "台北":
+        return {FLEET_SKILL_BASE + 0}
+    if reg == "新北":
+        return {FLEET_SKILL_BASE + 1}
+    if reg == "雙北":
+        return {FLEET_SKILL_BASE + 0, FLEET_SKILL_BASE + 1}   # 不拘雙北車:台北或新北皆可
+    return set()
 
 
 TW = timezone(timedelta(hours=8))   # 台灣時區(資料庫存 UTC,排班以 +08 牆鐘換算)
@@ -90,7 +125,7 @@ def _first_coord(*pairs) -> tuple[float, float] | None:
     return None
 
 
-def run_dispatch(db: Session, service_date: date) -> dict:
+def run_dispatch(db: Session, service_date: date, _isolation_override: bool | None = None) -> dict:
     # 1) 取當日可排訂單(已地理編碼)與可用車輛
     orders = list(
         db.scalars(
@@ -218,6 +253,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
 
     # 4) 組 VROOM 問題(營運參數由系統設定提供,可由管理者於設定頁調整)
     prm = settings_svc.dispatch_params(db)
+    # 車隊隔離:_isolation_override 為 fallback 二次派遣時強制關閉隔離之用
+    isolation = _isolation_override if _isolation_override is not None else prm.get("fleet_isolation", False)
     day_start, day_end = prm["day_start_sec"], prm["day_end_sec"]
     # 司機可提早 driver_margin 發車(去接服務時段開頭的 06:00 早單);
     # 收車端保留完成緩衝,讓「18:30 前已上車」的在途趟次可跨過完成(乘客上車仍限服務時段)。
@@ -238,6 +275,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             skills.add(LOCK_SKILL_BASE + v.id)   # 鎖住其進行中行程的專屬技能
         if v.id in pin_vehicle_ids:
             skills.add(PIN_SKILL_BASE + v.id)    # 固定行程:接受被釘給此車的單
+        if isolation:
+            skills |= _vehicle_fleet_skills(v.home_fleet)   # 車隊隔離:此車可服務的台北/新北技能
         kwargs = dict(
             id=v.id,
             profile="car",
@@ -300,6 +339,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         sk = {1} if _is_welfare(o) else set()
         if o.id in fixed_pins:
             sk.add(PIN_SKILL_BASE + fixed_pins[o.id])   # 固定行程:硬綁指定車
+        elif isolation:
+            sk |= _order_fleet_skills(o.fleet)   # 車隊隔離:台北/新北單需對應區域的車
         problem.add_shipment(
             pickup, delivery,
             amount=vroom.Amount([max(1, o.pax or 1), excl]),
@@ -413,6 +454,14 @@ def run_dispatch(db: Session, service_date: date) -> dict:
 
     assigned_ids = {o.id for o in orders if o.assigned_vehicle_id is not None}
     unassigned = [o.id for o in orders if o.id not in assigned_ids]
+
+    # 車隊隔離未派自動 fallback:若因隔離而有未派,且開啟 fallback → 當日回退統一派遣重排,
+    # 保證不因隔離漏單(統一派遣的指派數 ≥ 隔離)。_isolation_override=None 才觸發,避免無限遞迴。
+    if (isolation and _isolation_override is None and unassigned
+            and prm.get("fleet_isolation_fallback")):
+        res = run_dispatch(db, service_date, _isolation_override=False)
+        res["isolation_fallback"] = True
+        return res
 
     return {
         "service_date": service_date.isoformat(),

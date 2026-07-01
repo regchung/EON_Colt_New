@@ -15,12 +15,27 @@ from datetime import date, timezone, timedelta
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.driver import Driver
 from app.models.order import Order
+from app.models.unassigned_record import UnassignedRecord
 from app.models.vehicle import Vehicle
+
+
+def _unassigned_reason(o, ur: dict, has_welfare: bool) -> str:
+    """未派原因:優先取對比引擎已推斷的 unassigned_record,否則依訂單屬性啟發式判斷。"""
+    if o.id in ur and ur[o.id]:
+        return ur[o.id]
+    if o.pickup_lng is None or o.dropoff_lng is None:
+        return "缺座標(地址無法地理編碼)"
+    h = o.pickup_time.astimezone(TW).hour if o.pickup_time else 12
+    if h < 6 or h > 18:
+        return "服務時段外(上車不在 06:00–18:00)"
+    if o.vehicle_type == "welfare":
+        return "需福祉車:無福祉車可派或福祉車滿載" if not has_welfare else "福祉車滿載/時窗衝突,需增派或重排"
+    return "車隊滿載或求解邊際(需增派/重排或放寬設定)"
 
 TW = timezone(timedelta(hours=8))
 _HEAD_FONT = Font(bold=True, color="FFFFFF")
@@ -163,14 +178,20 @@ def build_workbook(db: Session, service_date: date, fleet: str | None,
                 ws4.append(_detail_row(v, o, i))
         ws4.freeze_panes = "A2"
 
-    # 未派(兩種版型皆附)
+    # 未派(兩種版型皆附)+ 未派原因
+    ur = {r.order_id: r.reason_detail for r in db.scalars(
+        select(UnassignedRecord).where(UnassignedRecord.service_date == service_date)).all()
+        if r.order_id}
+    has_welfare = bool(db.scalar(select(func.count()).select_from(Vehicle).where(
+        Vehicle.type == "welfare", Vehicle.active.is_(True))) or 0)
     ws5 = wb.create_sheet("未派")
-    ws5.append(["訂單ID", "乘客", "時間", "需求", "子車隊", "上車地址", "下車地址"])
-    _style_header(ws5, 7)
+    ws5.append(["訂單ID", "乘客", "時間", "需求", "子車隊", "上車地址", "下車地址", "未派原因"])
+    _style_header(ws5, 8)
     for o in un:
         ws5.append([o.id, o.passenger_name, _hm(o.pickup_time),
                     "福祉/輪椅" if o.vehicle_type == "welfare" else "一般",
-                    o.fleet, o.pickup_address, o.dropoff_address])
+                    o.fleet, o.pickup_address, o.dropoff_address,
+                    _unassigned_reason(o, ur, has_welfare)])
 
     for w in wb.worksheets:
         _autofit(w)

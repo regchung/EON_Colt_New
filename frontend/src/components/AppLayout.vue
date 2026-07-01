@@ -1,6 +1,6 @@
 <script setup>
 import { RouterLink, useRoute, useRouter } from 'vue-router'
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 
 import { Offcanvas } from 'bootstrap'
 import { useAuthStore } from '../stores/auth'
@@ -25,31 +25,48 @@ function logout() {
   router.push('/login')
 }
 
-const allNav = [
-  { to: '/', label: '儀表板', icon: '📊', roles: null },
-  { to: '/driver-route', label: '我的路單', icon: '🗒️', roles: ['driver'] },
-  { to: '/orders', label: '訂單管理', icon: '📋', roles: ['admin', 'dispatcher'] },
-  { to: '/vehicles', label: '車輛管理', icon: '🚐', roles: ['admin', 'dispatcher'] },
-  { to: '/drivers', label: '司機管理', icon: '🧑‍✈️', roles: ['admin', 'dispatcher'] },
-  { to: '/driver-vehicle', label: '司機車輛', icon: '🚗', roles: ['admin', 'dispatcher'] },
-  { to: '/roster', label: '班表', icon: '📅', roles: ['admin', 'dispatcher'] },
-  { to: '/dispatch-board', label: '派遣看板', icon: '🧲', roles: ['admin', 'dispatcher'] },
-  { to: '/daily-tasks', label: '車輛任務口卡', icon: '🪪', roles: ['admin', 'dispatcher'] },
-  { to: '/fixed-routes', label: '固定行程', icon: '📌', roles: ['admin', 'dispatcher'] },
-  { to: '/addresses', label: '地址簿', icon: '📍', roles: ['admin', 'dispatcher'] },
-  { to: '/map', label: '路線地圖', icon: '🗺️', roles: null },
-  { to: '/reports', label: '報表', icon: '📈', roles: ['admin', 'dispatcher'] },
-  { to: '/comparison', label: '人工 vs 自動', icon: '🆚', roles: ['admin', 'dispatcher'] },
-  { to: '/vehicle-comparison', label: '逐車對比', icon: '🚐', roles: ['admin', 'dispatcher'] },
-  { to: '/unassigned', label: '未派分析', icon: '⚠️', roles: ['admin', 'dispatcher'] },
-  { to: '/pool-suggest', label: '共乘建議', icon: '🤝', roles: ['admin', 'dispatcher'] },
-  { to: '/assistant', label: 'AI 助理', icon: '💬', roles: ['admin', 'dispatcher'] },
-  { to: '/users', label: '使用者管理', icon: '👥', roles: ['admin'] },
-  { to: '/settings', label: '參數設定', icon: '⚙️', roles: ['admin'] },
+const dsp = ['admin', 'dispatcher']
+const navGroups = [
+  { group: '總覽', items: [
+    { to: '/', label: '儀表板', icon: '📊', roles: null },
+    { to: '/driver-route', label: '我的路單', icon: '🗒️', roles: ['driver'] },
+    { to: '/map', label: '路線地圖', icon: '🗺️', roles: null },
+  ] },
+  { group: '派遣作業', items: [
+    { to: '/dispatch-board', label: '派遣看板', icon: '🧲', roles: dsp },
+    { to: '/daily-tasks', label: '車輛任務口卡', icon: '🪪', roles: dsp },
+    { to: '/fixed-routes', label: '固定行程', icon: '📌', roles: dsp },
+    { to: '/pool-suggest', label: '共乘建議', icon: '🤝', roles: dsp },
+    { to: '/unassigned', label: '未派分析', icon: '⚠️', roles: dsp },
+  ] },
+  { group: '分析報表', items: [
+    { to: '/reports', label: '報表', icon: '📈', roles: dsp },
+    { to: '/comparison', label: '人工 vs 自動', icon: '🆚', roles: dsp },
+    { to: '/vehicle-comparison', label: '逐車對比', icon: '🚐', roles: dsp },
+  ] },
+  { group: '基礎資料', items: [
+    { to: '/orders', label: '訂單管理', icon: '📋', roles: dsp },
+    { to: '/vehicles', label: '車輛管理', icon: '🚐', roles: dsp },
+    { to: '/drivers', label: '司機管理', icon: '🧑‍✈️', roles: dsp },
+    { to: '/driver-vehicle', label: '司機車輛', icon: '🚗', roles: dsp },
+    { to: '/roster', label: '班表', icon: '📅', roles: dsp },
+    { to: '/addresses', label: '地址簿', icon: '📍', roles: dsp },
+  ] },
+  { group: '系統', items: [
+    { to: '/assistant', label: 'AI 助理', icon: '💬', roles: dsp },
+    { to: '/users', label: '使用者管理', icon: '👥', roles: ['admin'] },
+    { to: '/settings', label: '參數設定', icon: '⚙️', roles: ['admin'] },
+  ] },
 ]
 
+// 各群組收合狀態(預設全展開);點群組標題切換
+const collapsed = ref({})
+function toggleGroup(g) { collapsed.value[g] = !collapsed.value[g] }
+
 const nav = computed(() =>
-  allNav.filter((item) => !item.roles || item.roles.includes(auth.role))
+  navGroups
+    .map((g) => ({ ...g, items: g.items.filter((i) => !i.roles || i.roles.includes(auth.role)) }))
+    .filter((g) => g.items.length),
 )
 </script>
 
@@ -94,13 +111,25 @@ const nav = computed(() =>
             ></button>
           </div>
           <div class="offcanvas-body p-0">
-            <ul class="nav nav-pills flex-column p-2 w-100">
-              <li v-for="item in nav" :key="item.to" class="nav-item">
-                <RouterLink :to="item.to" class="nav-link" active-class="active">
-                  <span class="me-2">{{ item.icon }}</span>{{ item.label }}
-                </RouterLink>
-              </li>
-            </ul>
+            <div class="p-2 w-100">
+              <div v-for="g in nav" :key="g.group" class="mb-1">
+                <button
+                  class="btn btn-sm w-100 d-flex justify-content-between align-items-center px-2 py-1 text-muted fw-semibold text-uppercase"
+                  style="font-size:.72rem; letter-spacing:.03em"
+                  @click="toggleGroup(g.group)"
+                >
+                  <span>{{ g.group }}</span>
+                  <span>{{ collapsed[g.group] ? '▸' : '▾' }}</span>
+                </button>
+                <ul v-show="!collapsed[g.group]" class="nav nav-pills flex-column">
+                  <li v-for="item in g.items" :key="item.to" class="nav-item">
+                    <RouterLink :to="item.to" class="nav-link py-1" active-class="active">
+                      <span class="me-2">{{ item.icon }}</span>{{ item.label }}
+                    </RouterLink>
+                  </li>
+                </ul>
+              </div>
+            </div>
           </div>
         </nav>
 

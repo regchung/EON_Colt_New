@@ -11,6 +11,7 @@ from sqlalchemy import delete
 
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.models.driver import Driver
 from app.models.order import Order
 from app.models.route import RouteStop
 from app.models.shift import ShiftException
@@ -29,8 +30,16 @@ def _cleanup(db):
     db.execute(delete(RouteStop).where(RouteStop.service_date == TEST_DATE))
     db.execute(delete(Order).where(Order.source_order_no.like("TEST-DISP-%")))
     db.execute(delete(ShiftException).where(ShiftException.ex_date == TEST_DATE))
+    db.execute(delete(Driver).where(Driver.name.like("TEST-DRV%")))  # 先清司機(FK→vehicles)
     db.execute(delete(Vehicle).where(Vehicle.plate.like("TEST-V%")))
     db.commit()
+
+
+def _add_drivers(db, *vehicle_ids):
+    """為測試車補種司機:派遣原則「只派給當天有司機的車」,本機真實 DB 已有司機,
+    故 TEST 車若無司機會被過濾 → 需顯式綁定測試司機。"""
+    db.add_all([Driver(name=f"TEST-DRV-{vid}", vehicle_id=vid) for vid in vehicle_ids])
+    db.flush()
 
 
 def _seed(db, welfare_order=False, welfare_vehicle=True):
@@ -42,6 +51,7 @@ def _seed(db, welfare_order=False, welfare_vehicle=True):
                  end_lng=121.55, end_lat=25.05)
     db.add_all([v1, v2])
     db.flush()
+    _add_drivers(db, v1.id, v2.id)
     db.add_all([
         ShiftException(vehicle_id=v1.id, ex_date=TEST_DATE, available=True),
         ShiftException(vehicle_id=v2.id, ex_date=TEST_DATE, available=True),
@@ -150,6 +160,7 @@ def test_run_dispatch_welfare_order_requires_welfare_vehicle(haversine):
                      end_lng=121.55, end_lat=25.05)
         db.add_all([v1, v2])
         db.flush()
+        _add_drivers(db, v1.id, v2.id)
         db.add_all([ShiftException(vehicle_id=v1.id, ex_date=TEST_DATE, available=True),
                     ShiftException(vehicle_id=v2.id, ex_date=TEST_DATE, available=True)])
         db.add(Order(
