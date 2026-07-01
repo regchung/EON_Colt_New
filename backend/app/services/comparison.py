@@ -18,6 +18,7 @@ from app.models.order import Order
 from app.models.unassigned_record import UnassignedRecord
 from app.models.vehicle import Vehicle
 from app.services import calibration as calib_svc
+from app.services import fixed_route_match
 from app.services import matrix as matrix_svc
 from app.services import settings as settings_svc
 
@@ -176,6 +177,22 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
         if fo.assigned_vehicle_id not in block_start and fo.pickup_lng is not None:
             block_start[fo.assigned_vehicle_id] = (fo.pickup_lng, fo.pickup_lat)
 
+    # 乘客姓名匹配固定行程 → 視同固定趟:釘指定司機的車(簡單釘車,正常作業、可與該司機其他單共乘;
+    # 非既定區塊者不設佔用時間)。與即時派遣一致,讓比對也認得「有指定司機的固定趟」。
+    order_ids = {o.id for o in orders}
+    k2 = len(fixed_orders)
+    for oid, vid in fixed_route_match.match_for_date(db, service_date)["pins"].items():
+        if oid not in order_ids or oid in pin_skill:
+            continue   # 非本車行本日單、或已是既定區塊(occupancy)→ 略過
+        pin_skill[oid] = 1000 + k2
+        veh_pins.setdefault(vid, set()).add(1000 + k2)
+        k2 += 1
+    have_ids = {v.id for v in vehicles}
+    for vid in set(veh_pins) - have_ids:
+        v = db.get(Vehicle, vid)
+        if v is not None:
+            vehicles.append(v)
+
     if not vehicles:
         return None
 
@@ -246,13 +263,23 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
         p_idx, d_idx = ord_pts[o.id]
         welfare = o.vehicle_type == "welfare"   # 原則4:只看車型,不以 need_wheelchair 判定
         pw_end = min(s + window_min * 60, DAY_END)
-        if o.id in pin_skill:
+        if o.id in pin_skill and o.occupancy_min:
             # 既定區塊:整趟佔用時間當服務時長、釘指定車(唯一 skill)、不設最長乘車上限;
             # excl=1 讓同車去/回程與空檔正常單可共存(不互併由唯一 skill 各釘各車保證)。
             total = (o.occupancy_min or 0) * 60
             setup_sec, teardown_sec = total // 2, total - total // 2
             excl = 1
             deliv_upper = None
+            o_skills = ({1} if welfare else set()) | {pin_skill[o.id]}
+        elif o.id in pin_skill:
+            # 姓名匹配固定行程 → 釘指定司機車,但正常作業時長、正常最長乘車上限、可共乘,
+            # 與該司機其他趟自然併車(非既定區塊獨佔)。
+            excl = 1 if o.allow_pool else EXCL_CAP
+            setup_sec, teardown_sec = _svc_split(o)
+            if svc_factor != 1.0:
+                setup_sec = int(setup_sec * svc_factor)
+                teardown_sec = int(teardown_sec * svc_factor)
+            deliv_upper = _max_ride_upper(int(arr[p_idx][d_idx]), pw_end)
             o_skills = ({1} if welfare else set()) | {pin_skill[o.id]}
         else:
             # 共乘需同意:未同意者第二維度佔滿 EXCL_CAP → 與任何單都無法同車(獨佔)
