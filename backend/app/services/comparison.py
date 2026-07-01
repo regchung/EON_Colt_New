@@ -118,7 +118,9 @@ def _classify_unassigned(o, secs: int, direct_sec: int, has_welfare: bool,
                 f"上/下車座標離當日營運區約 {far:.0f} 公里,疑似地理編碼錯誤(地址可能被編到他縣市,請校正座標)")
     if saturated:
         return "fleet_saturated", "當日該車行所有車輛皆已投入且滿載,需增派車輛才排得進此趟"
-    return "solver_margin", "車隊仍有閒置/餘力,屬求解邊際未覆蓋(重排或提高搜尋強度可望排入)"
+    return ("solver_margin",
+            "車隊仍有閒置/餘力屬求解邊際(常見於固定趟釘定車在緊上車窗下趕不到起點);"
+            "放寬上車時間窗、或校正既定區塊起點為路線起點,多可排入")
 
 
 def compare_day(db: Session, fleet: str, service_date: date, window_min: int | None = None,
@@ -167,6 +169,12 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
         sk = 1000 + k
         pin_skill[fo.id] = sk
         veh_pins.setdefault(fo.assigned_vehicle_id, set()).add(sk)
+    # 既定區塊車輛的出車起點 = 其「最早既定區塊」的上車點(校車司機從路線起點發車,非中央 depot),
+    # 避免緊上車窗下釘定車從遠處 depot 趕不到而未派。
+    block_start: dict[int, tuple[float, float]] = {}
+    for fo in sorted(fixed_orders, key=lambda o: o.pickup_time):
+        if fo.assigned_vehicle_id not in block_start and fo.pickup_lng is not None:
+            block_start[fo.assigned_vehicle_id] = (fo.pickup_lng, fo.pickup_lat)
 
     if not vehicles:
         return None
@@ -191,7 +199,8 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
 
     veh_se: dict[int, tuple[int, int]] = {}
     for v in vehicles:
-        s = _first((v.start_lng, v.start_lat), (v.depot_lng, v.depot_lat))
+        # 既定區塊車:起點=最早既定區塊上車點(校車從路線起點發車);否則用出車起點/depot
+        s = block_start.get(v.id) or _first((v.start_lng, v.start_lat), (v.depot_lng, v.depot_lat))
         e = _first((v.end_lng, v.end_lat), (v.start_lng, v.start_lat), (v.depot_lng, v.depot_lat))
         if s is not None:
             si = pt(*s)

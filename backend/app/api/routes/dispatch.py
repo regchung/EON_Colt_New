@@ -594,7 +594,7 @@ _REASON_LABEL = {
     "unroutable": "地址/座標無法路由",
     "suspect_geocode": "座標離營運區過遠(疑地理編碼錯誤)",
     "fleet_saturated": "全車隊滿載(需增車)",
-    "solver_margin": "求解邊際(仍有餘力,可重排)",
+    "solver_margin": "求解邊際(常為固定趟緊窗趕不到;放寬上車窗或校正起點可排入)",
     "infeasible": "車隊已滿載 / 時間窗無法排入",   # 舊碼,相容歷史紀錄
 }
 _FEEDBACK_CATS = [
