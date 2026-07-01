@@ -24,8 +24,9 @@ from app.models.unassigned_record import UnassignedRecord
 from app.models.user import User
 from app.models.vehicle import Vehicle
 from app.services import (
-    ai_dispatch, assistant, calibration, comparison, dispatch_export, dispatcher,
-    driver_affinity, forecast, matrix, osrm, pool_suggest, recurring_pairs, zone_affinity,
+    ai_dispatch, assistant, calibration, comparison, comparison_export, dispatch_export,
+    dispatcher, driver_affinity, forecast, matrix, osrm, pool_suggest, recurring_pairs,
+    zone_affinity,
 )
 from app.services import settings as app_settings
 
@@ -359,13 +360,19 @@ def comparison_sensitivity(
 
 
 @router.get("/comparison")
-def comparison_list(fleet: str | None = None, limit: int = 200, db: Session = Depends(get_db)):
-    """逐日對比明細。"""
+def comparison_list(fleet: str | None = None, date_from: date | None = None,
+                    date_to: date | None = None, limit: int = 500,
+                    db: Session = Depends(get_db)):
+    """逐日對比明細(可選車行 + 日期區間)。"""
     q = select(DispatchComparison).order_by(
-        DispatchComparison.saved_vehicles.desc(), DispatchComparison.service_date
+        DispatchComparison.service_date, DispatchComparison.fleet
     )
     if fleet:
         q = q.where(DispatchComparison.fleet == fleet)
+    if date_from:
+        q = q.where(DispatchComparison.service_date >= date_from)
+    if date_to:
+        q = q.where(DispatchComparison.service_date <= date_to)
     rows = list(db.scalars(q.limit(limit)).all())
     return [
         {
@@ -439,6 +446,32 @@ def comparison_by_vehicle(
     if r is None:
         raise HTTPException(404, "當日無成行單或查無人工派遣紀錄")
     return r
+
+
+@router.get("/comparison/export")
+def comparison_export_range(date_from: date, date_to: date, fleet: str | None = None,
+                            db: Session = Depends(get_db)):
+    """匯出某日期區間的人工 vs 自動比對(Excel:逐日總覽 + 各車行日)。"""
+    data = comparison_export.summary_workbook(db, date_from, date_to, fleet or None)
+    name = f"EON_COLT_比對_{date_from.isoformat()}_{date_to.isoformat()}_{fleet or '全車行'}.xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
+    )
+
+
+@router.get("/comparison/by-vehicle/export")
+def comparison_by_vehicle_export(fleet: str, service_date: date, window_min: int = 30,
+                                 db: Session = Depends(get_db)):
+    """匯出某日某車行的逐車對比明細(Excel)。"""
+    data = comparison_export.by_vehicle_workbook(db, fleet, service_date, window_min)
+    name = f"EON_COLT_逐車對比_{service_date.isoformat()}_{fleet}.xlsx"
+    return Response(
+        content=data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(name)}"},
+    )
 
 
 @router.get("/osrm-health")

@@ -43,16 +43,56 @@ async function loadPoolGain() {
     if (data.available) poolGain.value = data
   } catch { /* 投影未跑時略過 */ }
 }
+// 日期區間 + 匯出 + 逐車對比下鑽
+const rangeFrom = ref('')
+const rangeTo = ref('')
+const byVeh = ref(null)
+const byVehLoading = ref(false)
+const exporting = ref(false)
+
+function rangeParams() {
+  return {
+    ...(fleet.value ? { fleet: fleet.value } : {}),
+    ...(rangeFrom.value ? { date_from: rangeFrom.value } : {}),
+    ...(rangeTo.value ? { date_to: rangeTo.value } : {}),
+  }
+}
 async function loadRows() {
   loading.value = true
   try {
-    const { data } = await client.get('/dispatch/comparison', {
-      params: fleet.value ? { fleet: fleet.value, limit: 500 } : { limit: 500 },
-    })
+    const { data } = await client.get('/dispatch/comparison', { params: { limit: 500, ...rangeParams() } })
     rows.value = data
   } finally {
     loading.value = false
   }
+}
+function dl(blob, name) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = `EON_COLT_${name}`; a.click(); URL.revokeObjectURL(url)
+}
+async function exportSummary() {
+  if (!rangeFrom.value || !rangeTo.value) { alert('請先選日期區間'); return }
+  exporting.value = true
+  try {
+    const res = await client.get('/dispatch/comparison/export', { params: rangeParams(), responseType: 'blob' })
+    dl(res.data, `比對_${rangeFrom.value}_${rangeTo.value}_${fleet.value || '全車行'}.xlsx`)
+  } catch (e) { alert(e.response?.data?.detail || '匯出失敗') } finally { exporting.value = false }
+}
+async function loadByVehicle(f, d) {
+  byVehLoading.value = true; byVeh.value = null
+  try {
+    const { data } = await client.get('/dispatch/comparison/by-vehicle',
+      { params: { fleet: f, service_date: d, window_min: 9 }, timeout: 120000 })
+    byVeh.value = { ...data, _fleet: f, _date: d }
+    window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })
+  } catch (e) { alert(e.response?.data?.detail || '逐車對比失敗(該日需有人工派遣紀錄)') } finally { byVehLoading.value = false }
+}
+async function exportByVehicle() {
+  if (!byVeh.value) return
+  const res = await client.get('/dispatch/comparison/by-vehicle/export',
+    { params: { fleet: byVeh.value._fleet, service_date: byVeh.value._date, window_min: 9 }, responseType: 'blob' })
+  dl(res.data, `逐車對比_${byVeh.value._date}_${byVeh.value._fleet}.xlsx`)
 }
 onMounted(async () => { await loadSummary(); await loadSavings(); await loadPoolGain(); await loadRows() })
 
@@ -208,18 +248,30 @@ function poolTotalPct() {
     </div>
   </template>
 
-  <!-- 逐日明細 -->
-  <div class="d-flex align-items-center gap-2 mb-2">
-    <h6 class="text-muted mb-0 me-auto">逐日明細(依省車數排序)</h6>
-    <select v-model="fleet" class="form-select form-select-sm" style="width:auto" @change="loadRows">
-      <option value="">全部車行</option>
-      <option v-for="(s, f) in (summary?.by_fleet || {})" :key="f" :value="f">{{ f }}</option>
-    </select>
-  </div>
+  <!-- 逐日明細:區間查詢 + 匯出 -->
+  <div class="card shadow-sm mb-2 border-primary"><div class="card-body py-2">
+    <div class="row g-2 align-items-end">
+      <div class="col-6 col-md-2"><label class="form-label mb-0 small">起日</label>
+        <input v-model="rangeFrom" type="date" class="form-control form-control-sm" /></div>
+      <div class="col-6 col-md-2"><label class="form-label mb-0 small">迄日</label>
+        <input v-model="rangeTo" type="date" class="form-control form-control-sm" /></div>
+      <div class="col-6 col-md-3"><label class="form-label mb-0 small">車行</label>
+        <select v-model="fleet" class="form-select form-select-sm">
+          <option value="">全部車行</option>
+          <option v-for="(s, f) in (summary?.by_fleet || {})" :key="f" :value="f">{{ f }}</option>
+        </select></div>
+      <div class="col-6 col-md-2">
+        <button class="btn btn-sm btn-primary w-100" :disabled="loading" @click="loadRows">查詢</button></div>
+      <div class="col-6 col-md-3">
+        <button class="btn btn-sm btn-success w-100" :disabled="exporting" @click="exportSummary">
+          <span v-if="exporting" class="spinner-border spinner-border-sm me-1"></span>⬇ 匯出比對報告</button></div>
+    </div>
+    <div class="small text-muted mt-1">選日期區間查詢逐日對比;「匯出比對報告」= 逐日總覽 + 各車行日(Excel)。點每列「逐車」看該日該車行的逐車對比明細。</div>
+  </div></div>
   <div class="table-responsive">
     <table class="table table-sm table-hover align-middle">
       <thead><tr>
-        <th>日期</th><th>車行</th><th>成行單</th><th>人工車</th><th>自動車</th><th>省車</th><th>未派</th><th>人工里程</th><th>自動行駛</th>
+        <th>日期</th><th>車行</th><th>成行單</th><th>人工車</th><th>自動車</th><th>省車</th><th>未派</th><th>人工里程</th><th>自動行駛</th><th>明細</th>
       </tr></thead>
       <tbody>
         <tr v-for="(r, i) in rows" :key="i">
@@ -230,9 +282,49 @@ function poolTotalPct() {
           <td :class="{ 'text-danger': r.vroom_unassigned }">{{ r.vroom_unassigned }}</td>
           <td class="small text-muted">{{ r.human_distance_km }} km</td>
           <td class="small text-muted">{{ r.vroom_drive_min }} 分</td>
+          <td><button class="btn btn-sm btn-outline-primary py-0" @click="loadByVehicle(r.fleet, r.service_date)">逐車</button></td>
         </tr>
-        <tr v-if="!rows.length"><td colspan="9" class="text-center text-muted py-4">尚無對比資料</td></tr>
+        <tr v-if="!rows.length"><td colspan="10" class="text-center text-muted py-4">尚無對比資料</td></tr>
       </tbody>
     </table>
+  </div>
+
+  <!-- 逐車對比明細 -->
+  <div v-if="byVehLoading" class="text-muted my-3"><span class="spinner-border spinner-border-sm me-1"></span>計算逐車對比中…</div>
+  <div v-if="byVeh" class="card shadow-sm my-3 border-success">
+    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
+      <span class="fw-semibold">🚐 逐車對比 — {{ byVeh._date }} {{ byVeh._fleet }}
+        （人工 {{ byVeh.totals.human.vehicles }} 車 → 自動 {{ byVeh.totals.auto.vehicles }} 車）</span>
+      <div class="d-flex gap-2">
+        <button class="btn btn-sm btn-success" @click="exportByVehicle">⬇ 匯出逐車明細</button>
+        <button class="btn btn-sm btn-outline-secondary" @click="byVeh = null">關閉</button>
+      </div>
+    </div>
+    <div class="card-body">
+      <div class="row g-2 mb-2 text-center small">
+        <div class="col-4"><div class="fw-bold">{{ byVeh.totals.human.vehicles }} → <span class="text-success">{{ byVeh.totals.auto.vehicles }}</span></div>用車</div>
+        <div class="col-4"><div class="fw-bold">{{ byVeh.totals.human.distance_km }} → <span class="text-success">{{ byVeh.totals.auto.distance_km }}</span></div>里程 km</div>
+        <div class="col-4"><div class="fw-bold">{{ byVeh.totals.human.work_min }} → <span class="text-success">{{ byVeh.totals.auto.work_min }}</span></div>工時 分</div>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0">
+          <thead class="table-light"><tr>
+            <th>車牌</th><th>駕駛</th><th>車型</th><th>人工趟</th><th>自動趟</th><th>人工出車</th><th>自動出車</th>
+          </tr></thead>
+          <tbody>
+            <tr v-for="v in byVeh.vehicles" :key="v.plate"
+                :class="{ 'table-warning': v.human_used && !v.auto_used }">
+              <td class="fw-semibold">{{ v.plate }}</td><td>{{ v.driver || '-' }}</td>
+              <td>{{ v.type === 'welfare' ? '福祉' : '一般' }}</td>
+              <td>{{ (v.human || []).length }}</td>
+              <td class="text-success fw-bold">{{ (v.auto || []).length }}</td>
+              <td>{{ v.human_used ? '是' : '' }}</td>
+              <td>{{ v.auto_used ? '是' : '—（可省）' }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="small text-muted mt-1">黃底列 = 人工有出車、自動可省下的車。上車時間窗以 9 分計。</div>
+    </div>
   </div>
 </template>
