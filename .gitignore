@@ -25,3 +25,6 @@ backups/
 
 # DB bind-mount(主機資料夾,勿入庫)
 pgdata_data/
+
+# macOS Finder 中繼檔
+.DS_Store
