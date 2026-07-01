@@ -38,6 +38,36 @@ MAX_WORK_SEC = 8 * 3600              # 每車每日工時上限 8h(行車+服務
 EXCL_CAP = 100                       # 「不共乘」維度容量;未同意共乘者佔滿 → 獨佔整車
 LOCK_SKILL_BASE = 10000              # ongoing 訂單以「唯一技能」硬鎖原車(避開福祉 skill=1)
 PIN_SKILL_BASE = 20000              # 固定行程以「唯一技能」硬綁指定車
+FLEET_SKILL_BASE = 30000            # 車隊隔離:區域技能(fleet_isolation 開啟時用)
+
+# 車隊隔離(fleet_isolation):把訂單/車輛歸到「區域」,車只服務相容區域的單。
+# 台北車→台北+雙北單;新北車→新北+雙北單;不拘雙北車→兩者;神同行/基隆各自獨立。
+# 校車/日照/發隆興/樂格適/不拘【雙北】= 雙北(台北或新北皆可執行)。
+_FLEET_REGION = {
+    "台北": "台北", "新北": "新北", "神同行": "神同行",
+    "基隆": "基隆", "不拘【基隆】": "基隆",
+    "校車": "雙北", "日照": "雙北", "發隆興": "雙北", "樂格適": "雙北", "不拘【雙北】": "雙北",
+}
+_REGION_IDX = {"台北": 0, "新北": 1, "雙北": 2, "神同行": 3, "基隆": 4}
+# 車輛區域 → 可服務的「訂單區域」集合
+_VEHICLE_SERVE = {
+    "台北": {"台北", "雙北"}, "新北": {"新北", "雙北"},
+    "雙北": {"台北", "新北", "雙北"}, "神同行": {"神同行"}, "基隆": {"基隆"},
+}
+
+
+def _region_of(fleet: str | None) -> str:
+    return _FLEET_REGION.get((fleet or "").strip(), "雙北")
+
+
+def _order_fleet_skill(fleet: str | None) -> int:
+    return FLEET_SKILL_BASE + _REGION_IDX.get(_region_of(fleet), 2)
+
+
+def _vehicle_fleet_skills(home_fleet: str | None) -> set:
+    reg = _region_of(home_fleet)
+    serves = _VEHICLE_SERVE.get(reg, {"台北", "新北", "雙北"})   # 未知歸屬:視為雙北通用車
+    return {FLEET_SKILL_BASE + _REGION_IDX[r] for r in serves}
 
 
 TW = timezone(timedelta(hours=8))   # 台灣時區(資料庫存 UTC,排班以 +08 牆鐘換算)
@@ -238,6 +268,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             skills.add(LOCK_SKILL_BASE + v.id)   # 鎖住其進行中行程的專屬技能
         if v.id in pin_vehicle_ids:
             skills.add(PIN_SKILL_BASE + v.id)    # 固定行程:接受被釘給此車的單
+        if prm.get("fleet_isolation"):
+            skills |= _vehicle_fleet_skills(v.home_fleet)   # 車隊隔離:此車可服務的區域技能
         kwargs = dict(
             id=v.id,
             profile="car",
@@ -300,6 +332,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         sk = {1} if _is_welfare(o) else set()
         if o.id in fixed_pins:
             sk.add(PIN_SKILL_BASE + fixed_pins[o.id])   # 固定行程:硬綁指定車
+        elif prm.get("fleet_isolation"):
+            sk.add(_order_fleet_skill(o.fleet))   # 車隊隔離:此單需對應區域的車
         problem.add_shipment(
             pickup, delivery,
             amount=vroom.Amount([max(1, o.pax or 1), excl]),

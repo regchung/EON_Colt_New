@@ -34,6 +34,8 @@ DEFAULTS: list[dict] = [
      "label": "最長乘車緩衝(分)", "description": "乘車時間上限的固定加項;短程也允許一次併車繞路"},
     {"key": "service_time_factor", "value": "1.0", "value_type": "float", "group": "派遣規則",
      "label": "作業時間係數(省車鬆緊)", "description": "每趟作業時間 = 歷史校準 × 此係數。>1 較保守(省車率↓、貼近人工);<1 較積極(省車率↑)。與上車時間窗同為調整省車率的主旋鈕,不竄改校準真值"},
+    {"key": "fleet_isolation", "value": "false", "value_type": "bool", "group": "派遣規則",
+     "label": "車隊隔離派遣", "description": "關=集團統一派遣(跨區共乘,最省車);開=分車行派(台北車專派台北趟、新北專派新北趟,各區獨立)。校車/日照/不拘單由雙北(台北+新北)共用池。開啟會降低跨區共乘、用車數可能增加,換取各車行獨立管理與帳務清晰"},
     {"key": "pool_require_consent", "value": "true", "value_type": "bool", "group": "共乘",
      "label": "共乘需同意", "description": "未同意者獨佔整車,不與他人併乘"},
     {"key": "pool_max_detour_min", "value": "15", "value_type": "float", "group": "共乘",
@@ -110,6 +112,7 @@ def dispatch_params(db: Session) -> dict:
         "max_ride_factor": float(get(db, "max_ride_factor", 1.6) or 0),
         "max_ride_grace_sec": int(get(db, "max_ride_grace_min", 25) * 60),
         "service_factor": float(get(db, "service_time_factor", 1.0) or 1.0),
+        "fleet_isolation": bool(get(db, "fleet_isolation", False)),
     }
 
 
