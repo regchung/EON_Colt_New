@@ -37,7 +37,12 @@ def update_vehicle(id: int, payload: VehicleUpdate, db: Session = Depends(get_db
     obj = crud.get(db, id)
     if not obj:
         raise HTTPException(status_code=404, detail="Vehicle not found")
-    return crud.update(db, obj, payload)
+    # PATCH 語意:只更新請求有送的欄位,避免部分 payload 把 start/end/depot 等座標清空。
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        setattr(obj, field, value)
+    db.commit()
+    db.refresh(obj)
+    return obj
 
 
 @router.post("/{id}/suspend", response_model=VehicleOut)

@@ -70,6 +70,10 @@ const blank = () => ({
   shift_end: '18:00',
   depot_lng: null,
   depot_lat: null,
+  start_lng: null,
+  start_lat: null,
+  end_lng: null,
+  end_lat: null,
   active: true,
 })
 
@@ -177,12 +181,31 @@ async function remove(v) {
           <input v-model="form.shift_end" type="time" class="form-control" />
         </div>
         <div class="col-6 col-md-3">
-          <label class="form-label">出車點經度</label>
+          <label class="form-label">據點經度<span class="text-muted small">(備援)</span></label>
           <input v-model.number="form.depot_lng" type="number" step="any" class="form-control" />
         </div>
         <div class="col-6 col-md-3">
-          <label class="form-label">出車點緯度</label>
+          <label class="form-label">據點緯度<span class="text-muted small">(備援)</span></label>
           <input v-model.number="form.depot_lat" type="number" step="any" class="form-control" />
+        </div>
+        <div class="col-12"><hr class="my-1" />
+          <span class="small text-muted">🚩 出車起點 / 收車終點(派遣路線首末錨點;留空則退用「據點」)。可用歷史首趟上車/末趟下車校準以降低空駛。</span>
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label">出車起點經度</label>
+          <input v-model.number="form.start_lng" type="number" step="any" class="form-control" placeholder="121.5" />
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label">出車起點緯度</label>
+          <input v-model.number="form.start_lat" type="number" step="any" class="form-control" placeholder="25.0" />
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label">收車終點經度</label>
+          <input v-model.number="form.end_lng" type="number" step="any" class="form-control" placeholder="121.5" />
+        </div>
+        <div class="col-6 col-md-3">
+          <label class="form-label">收車終點緯度</label>
+          <input v-model.number="form.end_lat" type="number" step="any" class="form-control" placeholder="25.0" />
         </div>
         <div class="col-12">
           <div class="form-check">
