@@ -470,32 +470,36 @@ def persist_day(db: Session, service_date: date, window_min: int | None = None) 
     if window_min is None:
         window_min = settings_svc.get(db, "pickup_window_min", 30)
     run_at = datetime.now(TW)
-    for model in (DispatchComparison, UnassignedRecord, AutoDispatchStop):
-        db.query(model).filter(model.service_date == service_date).delete()
-    db.commit()
-
-    fleets = [f for (f,) in db.execute(
-        select(Order.fleet).where(Order.service_date == service_date, Order.status == "done")
-        .group_by(Order.fleet).order_by(Order.fleet)).all() if f]
     res = {"service_date": service_date.isoformat(), "fleets": 0, "stops": 0,
            "unassigned": 0, "human_vehicles": 0, "vroom_vehicles": 0}
-    for fl in fleets:
-        r = compare_day(db, fl, service_date, window_min, return_stops=True)
-        if not r:
-            continue
-        stops = r.pop("stops", None) or []
-        detail = r.pop("unassigned_detail", [])
-        r.pop("plan", None)
-        res["human_vehicles"] += r["human_vehicles"]
-        res["vroom_vehicles"] += r["vroom_vehicles"]
-        db.add(DispatchComparison(**r))
-        res["unassigned"] += _persist_unassigned(db, fl, service_date, window_min, detail)
-        for s in stops:
-            db.add(AutoDispatchStop(service_date=service_date, fleet=fl,
-                                    run_at=run_at, window_min=window_min, **s))
-        res["fleets"] += 1
-        res["stops"] += len(stops)
-    db.commit()
+    try:
+        # 原子交易:刪(只當日)+ 寫一起 commit;中途失敗 rollback,保留舊資料、不留空窗、不重複累加。
+        for model in (DispatchComparison, UnassignedRecord, AutoDispatchStop):
+            db.query(model).filter(model.service_date == service_date).delete()
+
+        fleets = [f for (f,) in db.execute(
+            select(Order.fleet).where(Order.service_date == service_date, Order.status == "done")
+            .group_by(Order.fleet).order_by(Order.fleet)).all() if f]
+        for fl in fleets:
+            r = compare_day(db, fl, service_date, window_min, return_stops=True)
+            if not r:
+                continue
+            stops = r.pop("stops", None) or []
+            detail = r.pop("unassigned_detail", [])
+            r.pop("plan", None)
+            res["human_vehicles"] += r["human_vehicles"]
+            res["vroom_vehicles"] += r["vroom_vehicles"]
+            db.add(DispatchComparison(**r))
+            res["unassigned"] += _persist_unassigned(db, fl, service_date, window_min, detail)
+            for s in stops:
+                db.add(AutoDispatchStop(service_date=service_date, fleet=fl,
+                                        run_at=run_at, window_min=window_min, **s))
+            res["fleets"] += 1
+            res["stops"] += len(stops)
+        db.commit()
+    except Exception:
+        db.rollback()   # 保留該日舊資料(不會出現「刪了沒寫」)
+        raise
     res["saved_vehicles"] = res["human_vehicles"] - res["vroom_vehicles"]
     return res
 
