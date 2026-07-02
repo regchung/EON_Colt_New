@@ -38,6 +38,13 @@ docker compose exec backend python -m pytest -q   # 後端測試
 4. **jq 中文 key**:shell 用 jq 時 key 用英文,避免 quoting 錯誤。
 5. **測試種子**:`backend/tests/conftest.py` 會在乾淨 DB 種子 admin(TestClient 不觸發 lifespan)。
 6. **地址簿**:地理編碼先查 `address_alias`→`address_point`,未命中才打 Map8;多描述歸一門牌。
+7. **時區**:DB(`timezone=Asia/Taipei`)、backend/db 容器(`TZ`/`PGTZ=Asia/Taipei`)已統一 +08;
+   診斷用 `python -m scripts.show_order`(一律台灣時間),勿用無參 `astimezone()`(會跟容器/UTC 走 → 誤判)。
+8. **匯入人工班表後的標準流程**(每次匯入 done 訂單/SERVED 歷史後都做):
+   ①**先跑自動派遣=對比引擎**(對該日各車行 `compare_day`,內部即 VROOM 自動派遣,**不動人工資料**)
+   並持久化 `dispatch_comparison`+`unassigned_record`(**只清/重算該日,勿用 `run_batch`——它會清空全部歷史**);
+   ② 檢視**人工比對**(🆚 /comparison)③ 檢視**逐車比對**(🚐 /vehicle-comparison,頁面即時算)。
+   註:done 日**不可**跑實務 `run_dispatch`(會刪當日 route_stop、毀人工路線)。
 
 ## 推送到 GitHub
 Repo:https://github.com/regchung/EON_COLT(remote `origin` 已設,乾淨 https URL)。
