@@ -1,10 +1,15 @@
 services:
   db:
     image: postgres:16
+    # 伺服器層預設台灣時區:所有連線(含 psql / 任何工具)讀回 timestamptz 一律顯示 +08,
+    # 避免診斷時看到 UTC(如 00:30+00)而誤判(內部仍存 UTC,只改顯示)。
+    command: ["postgres", "-c", "timezone=Asia/Taipei"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      TZ: Asia/Taipei          # 容器時區:log / 系統時間顯示台灣
+      PGTZ: Asia/Taipei        # psql client 預設時區
     volumes:
       # 綁定主機資料夾(非 named volume):docker volume/system prune 不會刪除,防誤刪。
       - ./pgdata_data:/var/lib/postgresql/data
@@ -35,6 +40,7 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       BACKEND_CORS_ORIGINS: ${BACKEND_CORS_ORIGINS}
       OSRM_URL: ${OSRM_URL:-http://osrm:5000}
+      TZ: Asia/Taipei          # 容器時區:python datetime.now()/無參 astimezone()/log 一律台灣時間
     volumes:
       - ./backend:/app
     ports:
