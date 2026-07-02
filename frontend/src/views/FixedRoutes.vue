@@ -1,8 +1,21 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed } from 'vue'
 import client from '../api/client'
 
 const rows = ref([])
+// 篩選:搜尋(路線/姓名/司機/關鍵字)+ 車行,方便維護 BD03 等群組規則
+const q = ref('')
+const fleetFilter = ref('')
+const fleetOptions = computed(() => [...new Set(rows.value.map((r) => r.fleet).filter(Boolean))].sort())
+const filteredRows = computed(() => {
+  const s = q.value.trim().toLowerCase()
+  return rows.value.filter((r) => {
+    if (fleetFilter.value && r.fleet !== fleetFilter.value) return false
+    if (!s) return true
+    return [r.label, r.match_name, r.driver_name, r.keyword, r.note]
+      .some((x) => (x || '').toLowerCase().includes(s))
+  })
+})
 const matchDate = ref(new Date().toISOString().slice(0, 10))
 const match = ref(null)
 async function runMatch() {
@@ -96,10 +109,17 @@ async function del(r) {
 </script>
 
 <template>
-  <p class="text-muted small">
-    固定行程指定司機:設定「某地點/個案(關鍵字)固定由某司機執行」,可分早/午/晚時段。
-    派遣時將符合的訂單優先指派給指定司機(整合中)。
-  </p>
+  <!-- 設定方法提示 -->
+  <div class="alert alert-info py-2 px-3 small mb-3">
+    <div class="fw-semibold mb-1">🛈 設定方法(三種用法,填對應欄位即可)</div>
+    <ol class="mb-1 ps-3">
+      <li><b>群組固定司機(如 BD03)</b>:填「<b>指定姓名</b>」(乘客姓名,如 <code>李陳碧雲</code>)+「<b>指定司機</b>」(如 <code>陳信忠</code>),時段選「<b>全天</b>」。
+        → 該乘客各趟自動釘給該司機的車(維持照護連續性),仍正常串接/可共乘。</li>
+      <li><b>地點固定司機(如校車/日照站)</b>:填「<b>地點關鍵字</b>」(如 <code>成德國中</code>)+「指定司機」。→ 該地點的單固定由該司機接。</li>
+      <li><b>整車既定區塊(整趟包車)</b>:另填下方「<b>佔用時間(分)</b>」→ 釘整台車、期間不插單(適合真正的團體包車;分散接送請勿用)。</li>
+    </ol>
+    <div class="text-muted">指定姓名/地點關鍵字<b>至少填一項</b>;派遣與人工vs自動對比皆即時採用。維護 BD03 群組:下方清單搜尋「<code>BD03</code>」即可逐條編輯。</div>
+  </div>
   <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>
   <div v-if="toast" class="alert alert-success py-2">{{ toast }}</div>
 
@@ -246,14 +266,24 @@ async function del(r) {
     </div>
   </div></div>
 
-  <!-- 清單 -->
+  <!-- 清單 + 篩選 -->
+  <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+    <input v-model="q" class="form-control form-control-sm" style="width:220px"
+           placeholder="🔍 搜尋 路線/姓名/司機/關鍵字(如 BD03)" />
+    <select v-model="fleetFilter" class="form-select form-select-sm" style="width:150px">
+      <option value="">全部車行</option>
+      <option v-for="f in fleetOptions" :key="f" :value="f">{{ f }}</option>
+    </select>
+    <button v-if="q || fleetFilter" class="btn btn-sm btn-outline-secondary" @click="q = ''; fleetFilter = ''">清除</button>
+    <span class="small text-muted">顯示 {{ filteredRows.length }} / {{ rows.length }} 條</span>
+  </div>
   <div class="table-responsive">
     <table class="table table-sm table-hover align-middle">
       <thead class="table-light"><tr>
         <th>路線</th><th>地點關鍵字</th><th>指定姓名</th><th>指定司機</th><th>對應車</th><th>時段</th><th>車行</th><th>啟用</th><th></th>
       </tr></thead>
       <tbody>
-        <tr v-for="r in rows" :key="r.id">
+        <tr v-for="r in filteredRows" :key="r.id">
           <td class="fw-semibold">{{ r.label }}</td>
           <td><code v-if="r.keyword">{{ r.keyword }}</code><span v-else class="text-muted">—</span></td>
           <td>{{ r.match_name || '—' }}</td>
@@ -270,7 +300,8 @@ async function del(r) {
             <button class="btn btn-sm btn-outline-danger ms-1" @click="del(r)">刪</button>
           </td>
         </tr>
-        <tr v-if="!rows.length"><td colspan="9" class="text-center text-muted py-3">尚無固定行程</td></tr>
+        <tr v-if="!filteredRows.length"><td colspan="9" class="text-center text-muted py-3">
+          {{ rows.length ? '無符合篩選的規則' : '尚無固定行程' }}</td></tr>
       </tbody>
     </table>
   </div>
