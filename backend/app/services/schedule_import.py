@@ -230,4 +230,17 @@ def import_schedule(db: Session, content: bytes, filename: str,
             rep["errors"].append({"row": idx + 2, "error": str(e)})
 
     db.commit()
+
+    # 匯入後自動地址編碼勘誤(規則:判未派前先校正離群/缺失座標,避免誤編他縣市被當未派)
+    try:
+        from app.services import geo_audit
+        rep["geo_audit"] = {}
+        for d in dates:
+            ga = geo_audit.audit_day(db, d, apply=True)
+            rep["geo_audit"][d.isoformat()] = {
+                "corrected": ga.get("corrected_count", 0),
+                "failed": ga.get("failed_count", 0),
+            }
+    except Exception as e:  # noqa: BLE001
+        rep["geo_audit_error"] = str(e)
     return rep

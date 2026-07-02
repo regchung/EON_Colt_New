@@ -237,6 +237,14 @@ def geocode_pending(limit: int | None = None, db: Session = Depends(get_db)):
     }
 
 
+@router.post("/geo-audit")
+def geo_audit(service_date: date, apply: bool = True, db: Session = Depends(get_db)):
+    """地址編碼勘誤:某日缺座標或離營運區>40km(疑似編到他縣市)的訂單,
+    產生修正版地址重編、挑最靠營運區的結果採用並回寫(apply=False 為 dry-run)。"""
+    from app.services import geo_audit as ga
+    return ga.audit_day(db, service_date, apply=apply)
+
+
 from app.models.vehicle import Vehicle  # noqa: E402
 
 

@@ -41,7 +41,10 @@ docker compose exec backend python -m pytest -q   # 後端測試
 7. **時區**:DB(`timezone=Asia/Taipei`)、backend/db 容器(`TZ`/`PGTZ=Asia/Taipei`)已統一 +08;
    診斷用 `python -m scripts.show_order`(一律台灣時間),勿用無參 `astimezone()`(會跟容器/UTC 走 → 誤判)。
 8. **匯入人工班表後的標準流程**(每次匯入 done 訂單/SERVED 歷史後都做):
-   ①**先跑自動派遣=對比引擎**(對該日各車行 `compare_day`,內部即 VROOM 自動派遣,**不動人工資料**)
+   ⓪**地址編碼勘誤**(`geo_audit.audit_day`,已自動接在 `import_schedule` 末端;亦可 `POST /orders/geo-audit`):
+   缺座標或離當日營運區中位點 >40km(疑似編到他縣市)者,產生修正版地址重編、挑最靠營運區的結果**自動回寫**
+   → **判未派前先排除編碼錯誤**(規則:未派單先勘誤再重派,確認是否真無法派遣);
+   ①**跑自動派遣=對比引擎**(對該日各車行 `compare_day`,內部即 VROOM 自動派遣,**不動人工資料**)
    並持久化 `dispatch_comparison`+`unassigned_record`(**只清/重算該日,勿用 `run_batch`——它會清空全部歷史**);
    ② 檢視**人工比對**(🆚 /comparison)③ 檢視**逐車比對**(🚐 /vehicle-comparison,頁面即時算)。
    註:done 日**不可**跑實務 `run_dispatch`(會刪當日 route_stop、毀人工路線)。
