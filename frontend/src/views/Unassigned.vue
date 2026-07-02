@@ -1,6 +1,22 @@
 <script setup>
 import { onMounted, ref } from 'vue'
 import client from '../api/client'
+import SuggestVehicle from '../components/SuggestVehicle.vue'
+
+// 指派建議面板(未派單:哪台車可行 / 是否跨車行支援;done 日唯讀,營運中單可立即指派)
+const suggestOrder = ref(null)
+const suggestAllowAssign = ref(false)
+function openSuggest(i) {
+  suggestOrder.value = {
+    id: i.order_id, fleet: i.fleet, passenger: i.passenger,
+    pickup: i.pickup, dropoff: i.dropoff, welfare: i.welfare, time: i.pickup_time,
+  }
+  suggestAllowAssign.value = ['imported', 'scheduled'].includes(i.order_status)
+}
+async function onSuggestAssigned() {
+  suggestOrder.value = null
+  await selectDate(sel.value)
+}
 
 const fleets = ['', '台北', '新北', '樂格適', '發隆興']
 const fleet = ref('')
@@ -168,7 +184,12 @@ onMounted(async () => { await loadCats(); await loadDates() })
                 <td><div>{{ i.passenger || '—' }} <span class="text-muted">·{{ i.fleet }}</span></div>
                   <div class="text-muted" style="font-size:.78rem">{{ i.pickup }} → {{ i.dropoff }}</div></td>
                 <td><span class="badge bg-secondary">{{ i.reason_label }}</span></td>
-                <td>{{ i.has_feedback ? '✓' : '' }}</td>
+                <td class="text-nowrap">
+                  <button class="btn btn-sm btn-outline-primary py-0 px-1" style="font-size:.72rem"
+                          title="指派建議(哪台車可行 / 是否跨車行支援)"
+                          @click.stop="openSuggest(i)">💡建議</button>
+                  <span v-if="i.has_feedback" class="ms-1" title="已回饋">✓</span>
+                </td>
               </tr>
               <tr v-if="!list.length && !loadingList"><td colspan="4" class="text-center text-muted py-4">當日無未派</td></tr>
             </tbody>
@@ -217,4 +238,7 @@ onMounted(async () => { await loadCats(); await loadDates() })
       <div v-else class="text-muted text-center py-5 small">← 點選左側訂單查看明細與填寫回饋</div>
     </div>
   </div>
+
+  <SuggestVehicle :order="suggestOrder" :service-date="sel" :allow-assign="suggestAllowAssign"
+                  @close="suggestOrder = null" @assigned="onSuggestAssigned" />
 </template>

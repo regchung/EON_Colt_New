@@ -5,6 +5,7 @@ import client from '../api/client'
 const props = defineProps({
   order: { type: Object, default: null },      // { id, fleet, passenger, pickup, dropoff, welfare, time }
   serviceDate: { type: String, default: '' },
+  allowAssign: { type: Boolean, default: true },  // false=唯讀建議(不顯示採用,如 done 日未派分析)
 })
 const emit = defineEmits(['close', 'assigned'])
 
@@ -89,6 +90,9 @@ watch(scope, () => { if (props.order) load() })
               候選 {{ data.candidate_count }} 台 · 直達約 {{ data.direct_min ?? '—' }} 分
               <span v-if="scope === 'own'">（本車行不足時可切「全公司」找支援車）</span>
             </div>
+            <div v-if="!allowAssign" class="alert alert-secondary py-1 px-2 small mb-1">
+              🔎 唯讀建議：此為歷史/已完成單,僅供評估「是否真無法派遣」;實際指派請於營運日到派遣看板操作。
+            </div>
             <div class="table-responsive" style="max-height:46vh;overflow:auto">
               <table class="table table-sm table-hover align-middle mb-0 small">
                 <thead class="table-light" style="position:sticky;top:0"><tr>
@@ -113,11 +117,12 @@ watch(scope, () => { if (props.order) load() })
                       <span v-if="!c.feasible" class="text-danger d-block" style="font-size:.7rem">{{ c.reason }}</span>
                     </td>
                     <td>
-                      <button class="btn btn-sm" :class="c.feasible ? 'btn-success' : 'btn-outline-danger'"
+                      <button v-if="allowAssign" class="btn btn-sm" :class="c.feasible ? 'btn-success' : 'btn-outline-danger'"
                               :disabled="assigning === c.vehicle_id" @click="adopt(c)">
                         <span v-if="assigning === c.vehicle_id" class="spinner-border spinner-border-sm"></span>
                         <span v-else>採用</span>
                       </button>
+                      <span v-else class="text-muted small">—</span>
                     </td>
                   </tr>
                   <tr v-if="!data.candidates.length"><td colspan="4" class="text-center text-muted py-3">
