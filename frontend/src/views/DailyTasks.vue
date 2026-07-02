@@ -6,7 +6,7 @@ const meta = ref({ fleets: [], min_date: null, max_date: null })
 const date = ref('')
 const fleet = ref('')
 const plate = ref('')
-const source = ref('history')   // history=人工歷史 / plan=系統派遣
+const source = ref('plan')   // plan=自動派遣(客戶回饋用,預設)/ history=人工派遣
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
@@ -48,8 +48,8 @@ function printCards() { window.print() }
   <div class="card shadow-sm mb-3 no-print"><div class="card-body d-flex flex-wrap align-items-end gap-2">
     <div><label class="form-label mb-0 small">資料來源</label>
       <select v-model="source" class="form-select form-select-sm" style="width:130px" @change="load">
-        <option value="history">人工歷史</option>
-        <option value="plan">系統派遣</option>
+        <option value="plan">🤖 自動派遣</option>
+        <option value="history">🧑 人工派遣</option>
       </select></div>
     <div><label class="form-label mb-0 small">日期</label>
       <input v-model="date" type="date"

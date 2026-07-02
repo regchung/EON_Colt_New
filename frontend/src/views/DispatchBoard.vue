@@ -11,7 +11,9 @@ const dragId = ref(null)
 const dragFrom = ref(null)
 const fleet = ref('')        // 車行過濾
 const plate = ref('')        // 車號過濾(下拉,跟隨車行)
+const source = ref('auto')   // auto=自動派遣(唯讀,客戶回饋用,預設)/ human=人工當前(可拖放微調)
 const suggestOrder = ref(null)   // 開啟建議車輛面板的未派單
+function setSource(s) { source.value = s; load() }
 
 function openSuggest(t) {
   suggestOrder.value = {
@@ -48,7 +50,7 @@ function onFleetChange() {
 async function load() {
   loading.value = true; error.value = ''
   try {
-    const { data } = await client.get('/dispatch/board', { params: { service_date: date.value } })
+    const { data } = await client.get('/dispatch/board', { params: { service_date: date.value, source: source.value } })
     board.value = data
   } catch (e) { error.value = e.response?.data?.detail || '讀取失敗' } finally { loading.value = false }
 }
@@ -60,8 +62,12 @@ onMounted(async () => {
   await load()
 })
 
-function onDragStart(orderId, fromVid) { dragId.value = orderId; dragFrom.value = fromVid }
+function onDragStart(orderId, fromVid) {
+  if (source.value === 'auto') return   // 自動派遣為唯讀,不可拖放
+  dragId.value = orderId; dragFrom.value = fromVid
+}
 async function onDrop(toVid) {
+  if (source.value === 'auto') return
   const id = dragId.value
   dragId.value = null
   if (id == null || toVid === dragFrom.value) return
@@ -76,8 +82,15 @@ async function onDrop(toVid) {
 <template>
   <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
     <span class="fw-semibold">🧲 派遣看板</span>
+    <div class="btn-group btn-group-sm" role="group">
+      <button type="button" class="btn" :class="source === 'auto' ? 'btn-primary' : 'btn-outline-primary'"
+              @click="setSource('auto')">🤖 自動派遣</button>
+      <button type="button" class="btn" :class="source === 'human' ? 'btn-primary' : 'btn-outline-primary'"
+              @click="setSource('human')">🧑 人工派遣</button>
+    </div>
     <input v-model="date" type="date" class="form-control form-control-sm" style="width:160px" @change="load" />
     <button class="btn btn-sm btn-primary" :disabled="loading" @click="load">{{ loading ? '讀取中…' : '重新整理' }}</button>
+    <span v-if="source === 'auto'" class="badge bg-info text-dark">自動派遣(唯讀)</span>
     <select v-model="fleet" class="form-select form-select-sm" style="width:140px" title="車行過濾"
             @change="onFleetChange">
       <option value="">全部車行</option>

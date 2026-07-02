@@ -90,8 +90,19 @@ def _load(db: Session, service_date: date, fleet: str | None):
 
 
 def build_workbook(db: Session, service_date: date, fleet: str | None,
-                   per_vehicle: bool) -> bytes:
+                   per_vehicle: bool, source: str = "auto") -> bytes:
     orders, veh, drv = _load(db, service_date, fleet)
+    if source == "auto":
+        # 以自動派遣落地(auto_dispatch_stop)覆蓋指派(in-memory,結束前 rollback 不落庫)
+        from app.models.auto_dispatch_stop import AutoDispatchStop
+        auto = {oid: (vid, seq, eta) for oid, vid, seq, eta in db.execute(
+            select(AutoDispatchStop.order_id, AutoDispatchStop.vehicle_id,
+                   AutoDispatchStop.seq, AutoDispatchStop.eta)
+            .where(AutoDispatchStop.service_date == service_date,
+                   AutoDispatchStop.kind == "pickup")).all()}
+        for o in orders:
+            a = auto.get(o.id)
+            o.assigned_vehicle_id, o.dispatch_seq, o.eta = a if a else (None, None, None)
     asg = [o for o in orders if o.assigned_vehicle_id]
     un = [o for o in orders if not o.assigned_vehicle_id]
     byv: dict[int, list] = defaultdict(list)
@@ -199,6 +210,8 @@ def build_workbook(db: Session, service_date: date, fleet: str | None,
         _autofit(w)
     buf = io.BytesIO()
     wb.save(buf)
+    if source == "auto":
+        db.rollback()   # 丟棄 in-memory 指派覆蓋,不落庫
     return buf.getvalue()
 
 

@@ -32,7 +32,10 @@ def _mins(dt):
     return t.hour * 60 + t.minute
 
 
-def board(db: Session, service_date: date) -> dict:
+def board(db: Session, service_date: date, source: str = "human") -> dict:
+    """source=human(orders 當前指派,可拖放微調)| auto(自動派遣落地,唯讀檢視)。"""
+    if source == "auto":
+        return _board_auto(db, service_date)
     # 已指派(scheduled/ongoing=即時派遣;done=歷史日實際派遣,讓 2025 等歷史日也看得到趟次)
     assigned = list(db.scalars(
         select(Order).where(
@@ -127,4 +130,85 @@ def board(db: Session, service_date: date) -> dict:
         "vehicles": vehicles,
         "unassigned": [trip(o) for o in unassigned],
         "unassigned_count": len(unassigned),
+    }
+
+
+def _board_auto(db: Session, service_date: date) -> dict:
+    """自動派遣看板(唯讀):趟次來自 auto_dispatch_stop 的 pickup 列,未派來自 unassigned_record。"""
+    from app.models.auto_dispatch_stop import AutoDispatchStop
+    from app.models.unassigned_record import UnassignedRecord
+
+    stops = list(db.scalars(select(AutoDispatchStop).where(
+        AutoDispatchStop.service_date == service_date,
+        AutoDispatchStop.kind == "pickup").order_by(
+        AutoDispatchStop.vehicle_id, AutoDispatchStop.seq)).all())
+    oids = [s.order_id for s in stops if s.order_id]
+    omap = {o.id: o for o in db.scalars(select(Order).where(Order.id.in_(oids))).all()} if oids else {}
+    vmap = {v.id: v for v in db.scalars(select(Vehicle)).all()}
+
+    drv_by_veh: dict[int, str] = {}
+    for d in db.scalars(select(Driver).where(Driver.vehicle_id.is_not(None))).all():
+        drv_by_veh.setdefault(d.vehicle_id, d.name)
+    for a in db.scalars(select(DriverVehicleAssignment).where(
+            DriverVehicleAssignment.service_date == service_date)).all():
+        dn = db.get(Driver, a.driver_id)
+        if dn:
+            drv_by_veh[a.vehicle_id] = dn.name
+
+    by_veh: dict[int, list] = {}
+    for s in stops:
+        by_veh.setdefault(s.vehicle_id, []).append(s)
+
+    vehicles = []
+    for vid, slist in sorted(by_veh.items(),
+                             key=lambda kv: (vmap[kv[0]].home_fleet or "" if kv[0] in vmap else "",
+                                             vmap[kv[0]].plate or "" if kv[0] in vmap else "")):
+        v = vmap.get(vid)
+        spans, trips = [], []
+        for s in slist:
+            o = omap.get(s.order_id)
+            st = _mins(s.eta)
+            if st is not None:
+                spans.append((st, st + _DEFAULT_DUR_MIN, s.order_id))
+        conflict_ids = set()
+        spans.sort()
+        for i in range(1, len(spans)):
+            if spans[i][0] < spans[i - 1][1]:
+                conflict_ids.add(spans[i][2]); conflict_ids.add(spans[i - 1][2])
+        for s in slist:
+            o = omap.get(s.order_id)
+            trips.append({
+                "order_id": s.order_id, "time": _hhmm(o.pickup_time) if o else None,
+                "eta": _hhmm(s.eta), "passenger": o.passenger_name if o else None,
+                "pickup": o.pickup_address if o else None, "dropoff": o.dropoff_address if o else None,
+                "pax": o.pax if o else None,
+                "welfare": (o.vehicle_type == "welfare" or o.need_wheelchair) if o else False,
+                "status": "auto", "fleet": o.fleet if o else None,
+                "support_fleet": (v.home_fleet if (v and o and (v.home_fleet or "") != (o.fleet or "")) else None),
+                "conflict": s.order_id in conflict_ids,
+            })
+        vehicles.append({
+            "vehicle_id": vid, "plate": v.plate if v else f"#{vid}",
+            "driver": drv_by_veh.get(vid), "fleet": v.home_fleet if v else None,
+            "on_duty": True, "trip_count": len(trips),
+            "conflicts": len(conflict_ids), "trips": trips,
+        })
+
+    un = list(db.scalars(select(UnassignedRecord).where(
+        UnassignedRecord.service_date == service_date)).all())
+    uomap = {o.id: o for o in db.scalars(select(Order).where(
+        Order.id.in_([u.order_id for u in un if u.order_id]))).all()} if un else {}
+    unassigned = []
+    for u in un:
+        o = uomap.get(u.order_id)
+        unassigned.append({
+            "order_id": u.order_id, "time": _hhmm(o.pickup_time) if o else None,
+            "passenger": o.passenger_name if o else None,
+            "pickup": o.pickup_address if o else None, "dropoff": o.dropoff_address if o else None,
+            "welfare": (o.vehicle_type == "welfare" or o.need_wheelchair) if o else False,
+            "fleet": o.fleet if o else None, "reason": u.reason_code,
+        })
+    return {
+        "service_date": service_date.isoformat(), "source": "auto",
+        "vehicles": vehicles, "unassigned": unassigned, "unassigned_count": len(unassigned),
     }

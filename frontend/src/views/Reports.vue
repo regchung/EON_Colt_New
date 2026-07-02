@@ -9,6 +9,7 @@ const dateFrom = ref(ago13)
 const dateTo = ref(today)
 const data = ref(null)
 const loading = ref(false)
+const source = ref('auto')   // auto=自動派遣(客戶回饋用,預設)/ human=人工實際
 
 const STATUS_LABEL = { imported: '待排', scheduled: '已排', ongoing: '進行中', done: '完成', canceled: '取消' }
 
@@ -16,13 +17,14 @@ async function load() {
   loading.value = true
   try {
     const res = await client.get('/reports/overview', {
-      params: { date_from: dateFrom.value, date_to: dateTo.value },
+      params: { date_from: dateFrom.value, date_to: dateTo.value, source: source.value },
     })
     data.value = res.data
   } finally {
     loading.value = false
   }
 }
+function setSource(s) { source.value = s; load() }
 onMounted(load)
 
 // --- 派遣表匯出(挑日期 + 車行 + 版型)---
@@ -43,14 +45,16 @@ async function exportDispatch() {
   expLoading.value = true
   try {
     const res = await client.get('/dispatch/export', {
-      params: { service_date: expDate.value, fleet: expFleet.value || undefined, layout: expLayout.value },
+      params: { service_date: expDate.value, fleet: expFleet.value || undefined,
+                layout: expLayout.value, source: source.value },
       responseType: 'blob',
     })
     const url = URL.createObjectURL(res.data)
     const a = document.createElement('a')
     a.href = url
     const tag = expLayout.value === 'per_vehicle' ? '每車表' : '總表'
-    a.download = `EON_COLT_派遣_${expDate.value}_${expFleet.value || '全車行'}_${tag}.xlsx`
+    const stag = source.value === 'auto' ? '自動' : '人工'
+    a.download = `EON_COLT_${stag}派遣_${expDate.value}_${expFleet.value || '全車行'}_${tag}.xlsx`
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {
@@ -62,13 +66,14 @@ async function exportDispatch() {
 
 async function exportCsv() {
   const res = await client.get('/reports/export-csv', {
-    params: { date_from: dateFrom.value, date_to: dateTo.value },
+    params: { date_from: dateFrom.value, date_to: dateTo.value, source: source.value },
     responseType: 'blob',
   })
   const url = URL.createObjectURL(res.data)
   const a = document.createElement('a')
   a.href = url
-  a.download = `eon_colt_${dateFrom.value}_${dateTo.value}.csv`
+  const tag = source.value === 'auto' ? '自動' : '人工'
+  a.download = `eon_colt_${tag}_${dateFrom.value}_${dateTo.value}.csv`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -127,6 +132,15 @@ const rateSeries = computed(() => [
       </div>
     </div>
   </div>
+
+  <!-- 資料來源:自動派遣(客戶回饋用,預設)/ 人工派遣(實際) -->
+  <div class="btn-group btn-group-sm mb-2" role="group">
+    <button type="button" class="btn" :class="source === 'auto' ? 'btn-primary' : 'btn-outline-primary'"
+            @click="setSource('auto')">🤖 自動派遣</button>
+    <button type="button" class="btn" :class="source === 'human' ? 'btn-primary' : 'btn-outline-primary'"
+            @click="setSource('human')">🧑 人工派遣</button>
+  </div>
+  <div v-if="data && data.note" class="alert alert-warning py-1 px-2 small mb-2">{{ data.note }}</div>
 
   <div class="d-flex flex-wrap gap-2 align-items-end mb-3">
     <div><label class="form-label mb-1 small">起</label>

@@ -52,12 +52,14 @@ def run(service_date: date, ai: bool = False, db: Session = Depends(get_db)):
 
 @router.get("/export")
 def export_dispatch(service_date: date, fleet: str | None = None, layout: str = "single",
-                    db: Session = Depends(get_db)):
-    """匯出某日派遣表(Excel)。fleet 空=全車行;layout=single(單檔多分頁)|per_vehicle(每車一張工作表)。"""
+                    source: str = "auto", db: Session = Depends(get_db)):
+    """匯出某日派遣表(Excel)。fleet 空=全車行;layout=single|per_vehicle;
+    source=auto(自動派遣落地,客戶回饋用)|human(人工實際指派)。"""
     data = dispatch_export.build_workbook(
-        db, service_date, (fleet or None), per_vehicle=(layout == "per_vehicle"))
+        db, service_date, (fleet or None), per_vehicle=(layout == "per_vehicle"), source=source)
     suffix = "每車表" if layout == "per_vehicle" else "總表"
-    name = f"EON_COLT_派遣_{service_date.isoformat()}_{fleet or '全車行'}_{suffix}.xlsx"
+    stag = "自動" if source == "auto" else "人工"
+    name = f"EON_COLT_{stag}派遣_{service_date.isoformat()}_{fleet or '全車行'}_{suffix}.xlsx"
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -776,10 +778,12 @@ def unassigned_feedback(rid: int, body: UnassignedFeedbackIn,
 
 
 @router.get("/board")
-def dispatch_board_view(service_date: date, db: Session = Depends(get_db)):
-    """派遣看板:某日各車趟次(含時間衝突)+ 未指派欄,供前端拖放微調。"""
+def dispatch_board_view(service_date: date, source: str = "human",
+                        db: Session = Depends(get_db)):
+    """派遣看板:某日各車趟次(含時間衝突)+ 未指派欄。
+    source=human(orders 當前指派,可拖放微調)| auto(自動派遣落地,唯讀)。"""
     from app.services import dispatch_board as board_svc
-    return board_svc.board(db, service_date)
+    return board_svc.board(db, service_date, source=source)
 
 
 @router.get("/board/meta")
