@@ -155,15 +155,17 @@ def _board_auto(db: Session, service_date: date) -> dict:
         if dn:
             drv_by_veh[a.vehicle_id] = dn.name
 
-    by_veh: dict[int, list] = {}
+    # 逐車行對比:同一車可被多車行各自使用 → 按(車輛×車行)分欄,避免跨車行合併成假衝突
+    by_veh: dict[tuple, list] = {}
     for s in stops:
-        by_veh.setdefault(s.vehicle_id, []).append(s)
+        by_veh.setdefault((s.vehicle_id, s.fleet), []).append(s)
 
     vehicles = []
-    for vid, slist in sorted(by_veh.items(),
-                             key=lambda kv: (vmap[kv[0]].home_fleet or "" if kv[0] in vmap else "",
-                                             vmap[kv[0]].plate or "" if kv[0] in vmap else "")):
+    for (vid, fl), slist in sorted(by_veh.items(), key=lambda kv: (kv[0][1] or "",
+                                   vmap[kv[0][0]].plate or "" if kv[0][0] in vmap else "")):
         v = vmap.get(vid)
+        # 接駁順序依 ETA(時間)從早到晚
+        slist = sorted(slist, key=lambda s: (s.eta is None, s.eta))
         spans, trips = [], []
         for s in slist:
             o = omap.get(s.order_id)
@@ -188,8 +190,9 @@ def _board_auto(db: Session, service_date: date) -> dict:
                 "conflict": s.order_id in conflict_ids,
             })
         vehicles.append({
-            "vehicle_id": vid, "plate": v.plate if v else f"#{vid}",
-            "driver": drv_by_veh.get(vid), "fleet": v.home_fleet if v else None,
+            "vehicle_id": vid, "col_key": f"{vid}-{fl or ''}",
+            "plate": v.plate if v else f"#{vid}",
+            "driver": drv_by_veh.get(vid), "fleet": fl,   # 此路線所屬車行(逐車行對比)
             "on_duty": True, "trip_count": len(trips),
             "conflicts": len(conflict_ids), "trips": trips,
         })

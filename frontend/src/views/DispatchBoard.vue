@@ -142,7 +142,7 @@ async function onDrop(toVid) {
     </div>
 
     <!-- 各車欄(套用車行/車牌過濾) -->
-    <div v-for="v in visibleVehicles" :key="v.vehicle_id" class="board-col border rounded"
+    <div v-for="v in visibleVehicles" :key="v.col_key || v.vehicle_id" class="board-col border rounded"
          @dragover.prevent @drop="onDrop(v.vehicle_id)">
       <div class="board-head px-2 py-1 small" :class="v.conflicts ? 'bg-danger text-white' : 'bg-primary text-white'">
         <div class="d-flex justify-content-between">

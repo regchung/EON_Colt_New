@@ -109,7 +109,10 @@ def build_workbook(db: Session, service_date: date, fleet: str | None,
     for o in asg:
         byv[o.assigned_vehicle_id].append(o)
     for vid in byv:
-        byv[vid].sort(key=lambda o: (o.dispatch_seq or 0, o.pickup_time))
+        if source == "auto":
+            byv[vid].sort(key=lambda o: (o.eta or o.pickup_time))   # 自動:seq 跨車行會重複,依時間排
+        else:
+            byv[vid].sort(key=lambda o: (o.dispatch_seq or 0, o.pickup_time))
 
     wb = Workbook()
     scope = fleet or "全車行"
