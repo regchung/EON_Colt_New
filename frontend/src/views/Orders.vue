@@ -3,6 +3,7 @@ import { onMounted, ref, reactive, computed } from 'vue'
 import { useOrdersStore } from '../stores/orders'
 import { useVehiclesStore } from '../stores/vehicles'
 import client from '../api/client'
+import SuggestVehicle from '../components/SuggestVehicle.vue'
 
 const store = useOrdersStore()
 const vehiclesStore = useVehiclesStore()
@@ -323,6 +324,21 @@ async function suggestZone(o) {
 async function adoptVehicle(orderId, vehicleId) {
   await client.post(`/orders/${orderId}/assign`, null, { params: { vehicle_id: vehicleId } })
   zoneSuggest.value = null
+  await store.fetchAll(filters.service_date ? { service_date: filters.service_date } : {})
+}
+
+// --- 最佳車輛建議(插入成本 + 切換車隊)---
+const suggestVehOrder = ref(null)
+function openSuggestVeh(o) {
+  suggestVehOrder.value = {
+    id: o.id, fleet: o.fleet, passenger: o.passenger_name,
+    pickup: o.pickup_address, dropoff: o.dropoff_address,
+    welfare: o.vehicle_type === 'welfare' || o.need_wheelchair,
+    time: (o.pickup_time || '').slice(11, 16),
+  }
+}
+async function onVehAssigned() {
+  suggestVehOrder.value = null
   await store.fetchAll(filters.service_date ? { service_date: filters.service_date } : {})
 }
 </script>
@@ -739,6 +755,12 @@ async function adoptVehicle(orderId, vehicleId) {
               @click="suggestZone(o)"
             >建議</button>
             <button
+              v-if="hasCoords(o) && !['canceled','done'].includes(o.status)"
+              class="btn btn-sm btn-outline-primary me-1"
+              title="最佳車輛建議(真實插入成本 + 可切換車隊)"
+              @click="openSuggestVeh(o)"
+            >💡最佳車</button>
+            <button
               v-if="o.status === 'scheduled'"
               class="btn btn-sm btn-outline-success me-1"
               title="標記為進行中(重排時鎖定)"
@@ -763,6 +785,9 @@ async function adoptVehicle(orderId, vehicleId) {
       </tbody>
     </table>
   </div>
+
+  <SuggestVehicle :order="suggestVehOrder"
+                  @close="suggestVehOrder = null" @assigned="onVehAssigned" />
 </template>
 
 <style scoped>

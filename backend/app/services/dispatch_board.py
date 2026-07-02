@@ -85,7 +85,8 @@ def board(db: Session, service_date: date) -> dict:
             "eta": _hhmm(o.eta), "passenger": o.passenger_name,
             "pickup": o.pickup_address, "dropoff": o.dropoff_address,
             "pax": o.pax, "welfare": o.vehicle_type == "welfare" or o.need_wheelchair,
-            "status": o.status,
+            "status": o.status, "fleet": o.fleet,
+            "support_fleet": o.support_fleet,   # 跨車行支援留痕(他隊車服務時 ≠ fleet)
         }
 
     vehicles = []

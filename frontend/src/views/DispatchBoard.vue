@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import client from '../api/client'
+import SuggestVehicle from '../components/SuggestVehicle.vue'
 
 const date = ref(new Date().toISOString().slice(0, 10))
 const board = ref(null)
@@ -10,6 +11,18 @@ const dragId = ref(null)
 const dragFrom = ref(null)
 const fleet = ref('')        // 車行過濾
 const plate = ref('')        // 車號過濾(下拉,跟隨車行)
+const suggestOrder = ref(null)   // 開啟建議車輛面板的未派單
+
+function openSuggest(t) {
+  suggestOrder.value = {
+    id: t.order_id, fleet: t.fleet, passenger: t.passenger,
+    pickup: t.pickup, dropoff: t.dropoff, welfare: t.welfare, time: t.time,
+  }
+}
+async function onAssigned() {
+  suggestOrder.value = null
+  await load()
+}
 
 const fleets = computed(() => {
   if (!board.value) return []
@@ -100,9 +113,15 @@ async function onDrop(toVid) {
       <div class="board-body p-1">
         <div v-for="t in board.unassigned" :key="t.order_id" class="trip-card border rounded p-1 mb-1 bg-white"
              draggable="true" @dragstart="onDragStart(t.order_id, null)">
-          <div class="d-flex justify-content-between"><b>{{ t.time }}</b>
-            <span v-if="t.welfare" class="badge bg-warning text-dark">福</span></div>
-          <div class="small">{{ t.passenger || '—' }}</div>
+          <div class="d-flex justify-content-between align-items-start">
+            <b>{{ t.time }}</b>
+            <span>
+              <span v-if="t.welfare" class="badge bg-warning text-dark">福</span>
+              <button class="btn btn-sm btn-outline-primary py-0 px-1 ms-1" style="font-size:.7rem"
+                      title="建議車輛(可切換車隊)" @click="openSuggest(t)">💡建議</button>
+            </span>
+          </div>
+          <div class="small">{{ t.passenger || '—' }}<span v-if="t.fleet" class="text-muted">·{{ t.fleet }}</span></div>
           <div class="text-muted" style="font-size:.72rem">{{ t.pickup }} → {{ t.dropoff }}</div>
         </div>
         <div v-if="!board.unassigned.length" class="text-muted small text-center py-2">（無）</div>
@@ -131,13 +150,18 @@ async function onDrop(toVid) {
               <span v-if="t.status === 'ongoing'" class="badge bg-success">進</span>
             </span>
           </div>
-          <div class="small">{{ t.passenger || '—' }}</div>
+          <div class="small">{{ t.passenger || '—' }}
+            <span v-if="t.support_fleet" class="badge bg-secondary" title="跨車行支援">支援</span>
+          </div>
           <div class="text-muted" style="font-size:.72rem">{{ t.pickup }} → {{ t.dropoff }}</div>
         </div>
         <div v-if="!v.trips.length" class="text-muted small text-center py-2">（空車）</div>
       </div>
     </div>
   </div>
+
+  <SuggestVehicle :order="suggestOrder" :service-date="date"
+                  @close="suggestOrder = null" @assigned="onAssigned" />
 </template>
 
 <style scoped>

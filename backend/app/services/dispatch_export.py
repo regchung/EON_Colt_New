@@ -128,9 +128,11 @@ def build_workbook(db: Session, service_date: date, fleet: str | None,
         return [v.plate, drv.get(v.id, "-"), seq, _hm(o.eta or o.pickup_time),
                 o.passenger_name, o.pax or 1,
                 "福祉" if o.vehicle_type == "welfare" else "一般",
-                o.pickup_address, o.dropoff_address, o.fleet]
+                o.pickup_address, o.dropoff_address, o.fleet,
+                o.support_fleet if (o.support_fleet and o.support_fleet != o.fleet) else ""]
 
-    DET_COLS = ["車牌", "司機", "順序", "上車ETA", "乘客", "人數", "車型", "上車地址", "下車地址", "子車隊"]
+    DET_COLS = ["車牌", "司機", "順序", "上車ETA", "乘客", "人數", "車型", "上車地址", "下車地址",
+                "子車隊", "支援車行"]
 
     if per_vehicle:
         # 每車一張工作表(派車單)

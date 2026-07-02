@@ -388,3 +388,75 @@ def _params_with(orig_fn, db, **overrides):
     base = dict(orig_fn(db))
     base.update(overrides)
     return lambda _db: base
+
+
+def _seed_two_fleets(db, order_welfare=False):
+    """神同行 1 車 + 新北 1 車(皆一般),一張未指派神同行單。回傳 (v_shin, v_new, order)。"""
+    v1 = Vehicle(plate="TEST-V1", type="normal", seats=4, active=True, home_fleet="神同行",
+                 depot_lng=121.53, depot_lat=25.04, start_lng=121.53, start_lat=25.04,
+                 end_lng=121.53, end_lat=25.04)
+    v2 = Vehicle(plate="TEST-V2", type="normal", seats=4, active=True, home_fleet="新北",
+                 depot_lng=121.55, depot_lat=25.05, start_lng=121.55, start_lat=25.05,
+                 end_lng=121.55, end_lat=25.05)
+    db.add_all([v1, v2])
+    db.flush()
+    _add_drivers(db, v1.id, v2.id)
+    db.add_all([ShiftException(vehicle_id=v1.id, ex_date=TEST_DATE, available=True),
+                ShiftException(vehicle_id=v2.id, ex_date=TEST_DATE, available=True)])
+    o = Order(source_order_no="TEST-DISP-S", service_date=TEST_DATE, pickup_time=_dt(9),
+              pickup_window_min=30, passenger_name="建議客",
+              pickup_address="上S", dropoff_address="下S",
+              pickup_lng=121.54, pickup_lat=25.045, dropoff_lng=121.56, dropoff_lat=25.05,
+              pax=1, vehicle_type="welfare" if order_welfare else "normal",
+              need_wheelchair=order_welfare, allow_pool=True, status="imported", fleet="神同行")
+    db.add(o)
+    db.commit()
+    return v1, v2, o
+
+
+def test_vehicle_suggest_own_scope_only_own_fleet(haversine):
+    from app.services import vehicle_suggest
+    db = SessionLocal()
+    try:
+        _cleanup(db)
+        v1, v2, o = _seed_two_fleets(db)
+        r = vehicle_suggest.suggest_for_order(db, o, TEST_DATE, fleet_scope="own")
+        plates = {c["plate"] for c in r["candidates"]}
+        assert plates == {"TEST-V1"}, "own 範圍只該有本車行(神同行)車"
+        assert r["recommended"]["plate"] == "TEST-V1"
+        assert r["recommended"]["feasible"]
+    finally:
+        _cleanup(db)
+        db.close()
+
+
+def test_vehicle_suggest_company_scope_includes_support(haversine):
+    from app.services import vehicle_suggest
+    db = SessionLocal()
+    try:
+        _cleanup(db)
+        v1, v2, o = _seed_two_fleets(db)
+        r = vehicle_suggest.suggest_for_order(db, o, TEST_DATE, fleet_scope="company")
+        by_plate = {c["plate"]: c for c in r["candidates"]}
+        assert {"TEST-V1", "TEST-V2"} <= set(by_plate), "company 範圍應含他隊車"
+        assert by_plate["TEST-V2"]["is_support"] is True, "新北車對神同行單應標記為支援"
+        assert by_plate["TEST-V1"]["is_own"] is True
+        # 本車行優先:同為可行時,本車行排前
+        assert r["candidates"][0]["is_own"] is True
+    finally:
+        _cleanup(db)
+        db.close()
+
+
+def test_vehicle_suggest_welfare_order_infeasible_on_normal(haversine):
+    from app.services import vehicle_suggest
+    db = SessionLocal()
+    try:
+        _cleanup(db)
+        v1, v2, o = _seed_two_fleets(db, order_welfare=True)
+        r = vehicle_suggest.suggest_for_order(db, o, TEST_DATE, fleet_scope="company")
+        assert all(not c["feasible"] and "需福祉車" in c["reason"] for c in r["candidates"]), \
+            "福祉單在一般車上皆應不可行且理由為需福祉車"
+    finally:
+        _cleanup(db)
+        db.close()

@@ -111,7 +111,9 @@ function printCards() { window.print() }
                     <td class="fw-semibold text-nowrap">{{ t.time }}</td>
                     <td>
                       <div><span class="fw-semibold">{{ t.passenger || '—' }}</span>
-                        <span v-if="t.phone" class="text-muted small ms-1">{{ t.phone }}</span></div>
+                        <span v-if="t.phone" class="text-muted small ms-1">{{ t.phone }}</span>
+                        <span v-if="t.support_fleet" class="badge bg-secondary ms-1"
+                              :title="`跨車行支援:${t.fleet || ''} 由 ${t.support_fleet} 支援`">支援·{{ t.support_fleet }}</span></div>
                       <div class="text-muted" style="font-size:.8rem">{{ t.pickup }} <span class="text-success">→</span> {{ t.dropoff }}</div>
                     </td>
                     <td class="text-center">{{ t.pax }}</td>

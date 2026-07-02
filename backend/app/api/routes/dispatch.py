@@ -28,6 +28,7 @@ from app.services import (
     dispatcher, driver_affinity, forecast, matrix, osrm, pool_suggest, recurring_pairs,
     zone_affinity,
 )
+from app.services import vehicle_suggest as vehicle_suggest_svc
 from app.services import settings as app_settings
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
@@ -74,6 +75,22 @@ def zone_suggest(order_id: int, service_date: date, db: Session = Depends(get_db
     if not order:
         raise HTTPException(status_code=404, detail="訂單不存在")
     return zone_affinity.suggest(db, order, service_date)
+
+
+@router.get("/vehicle-suggest")
+def vehicle_suggest(order_id: int, service_date: date | None = None,
+                    top_n: int = 6, fleet_scope: str = "own",
+                    db: Session = Depends(get_db)):
+    """單筆訂單 → 最佳車輛建議(人工排班用,dry-run):真實 OSRM 插入成本 + 可行性排名。
+
+    fleet_scope:own=本車行/同區(預設)、company=全公司、或指定車行名(跨車行支援)。
+    採用建議請呼叫 POST /orders/{id}/assign。
+    """
+    order = db.get(Order, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="訂單不存在")
+    return vehicle_suggest_svc.suggest_for_order(
+        db, order, service_date or order.service_date, top_n=top_n, fleet_scope=fleet_scope)
 
 
 @router.get("/pool-suggest")
@@ -769,6 +786,8 @@ def _plan_order_task(o: Order) -> dict:
         "pax": o.pax or 1, "wheelchair": 1 if o.need_wheelchair else 0,
         "welfare": o.vehicle_type == "welfare" or bool(o.need_wheelchair),
         "est_min": None, "order_no": o.source_order_no, "status": o.status,
+        "fleet": o.fleet,
+        "support_fleet": o.support_fleet if (o.support_fleet and o.support_fleet != o.fleet) else None,
     }
 
 
