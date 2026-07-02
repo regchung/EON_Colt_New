@@ -85,6 +85,12 @@ def _parse_bool(value, default: bool) -> bool:
     return default
 
 
+def _pool_consent(value) -> bool:
+    """共乘同意規則:預設不同意,唯一例外為值含『同意』(且非『不同意』)。"""
+    s = str(value).strip() if value is not None else ""
+    return ("同意" in s) and ("不同意" not in s)
+
+
 def _parse_vehicle_type(value) -> str:
     s = _norm(value)
     if "福祉" in s or "welfare" in s or "wheelchair" in s:
@@ -161,7 +167,8 @@ def parse_orders(filename: str, content: bytes) -> tuple[list[dict], list[dict]]
                     "pax": int(cell(row, "pax") or 1),
                     "vehicle_type": vtype,
                     "need_wheelchair": wheelchair,
-                    "allow_pool": _parse_bool(cell(row, "allow_pool"), default=True),
+                    # 共乘規則:預設不同意,唯一例外為「共乘欄位值含『同意』」(否則需行控徵詢後才可併)
+                    "allow_pool": _pool_consent(cell(row, "allow_pool")),
                     "note": (str(cell(row, "note")).strip() or None) if cell(row, "note") else None,
                     "status": "imported",
                 }

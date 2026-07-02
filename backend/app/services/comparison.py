@@ -5,7 +5,7 @@
 """
 from __future__ import annotations
 
-from datetime import date, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import numpy as np
 import vroom
@@ -125,8 +125,11 @@ def _classify_unassigned(o, secs: int, direct_sec: int, has_welfare: bool,
 
 
 def compare_day(db: Session, fleet: str, service_date: date, window_min: int | None = None,
-                return_plan: bool = False) -> dict | None:
+                return_plan: bool = False, return_stops: bool = False) -> dict | None:
     """回傳對比指標 dict;當日無成行單或無車則回 None。
+
+    return_stops=True 時額外回傳 stops=[{vehicle_id,plate,seq,kind,order_id,lng,lat,eta,
+    occupancy,is_support}...](自動派遣每車每停靠點,供持久化)。
 
     window_min=None 時讀系統參數 pickup_window_min(預設窗)。
     作業時間另乘系統參數 service_time_factor(省車鬆緊主旋鈕,不竄改校準真值)。
@@ -272,9 +275,9 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
             deliv_upper = None
             o_skills = ({1} if welfare else set()) | {pin_skill[o.id]}
         elif o.id in pin_skill:
-            # 姓名匹配固定行程 → 釘指定司機車,但正常作業時長、正常最長乘車上限、可共乘,
+            # 姓名匹配固定行程(固定趟)→ 釘指定司機車;固定趟等級凌駕共乘同意 → 強制可併(原則1),
             # 與該司機其他趟自然併車(非既定區塊獨佔)。
-            excl = 1 if o.allow_pool else EXCL_CAP
+            excl = 1
             setup_sec, teardown_sec = _svc_split(o)
             if svc_factor != 1.0:
                 setup_sec = int(setup_sec * svc_factor)
@@ -282,8 +285,8 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
             deliv_upper = _max_ride_upper(int(arr[p_idx][d_idx]), pw_end)
             o_skills = ({1} if welfare else set()) | {pin_skill[o.id]}
         else:
-            # 共乘需同意:未同意者第二維度佔滿 EXCL_CAP → 與任何單都無法同車(獨佔)
-            excl = 1 if o.allow_pool else EXCL_CAP
+            # 共乘需同意:以 pool_consent_at 有值為準,未同意者第二維度佔滿 EXCL_CAP → 獨佔整車
+            excl = 1 if o.pool_consent_at is not None else EXCL_CAP
             setup_sec, teardown_sec = _svc_split(o)   # 每趟作業:歷史校準(車行×福祉)
             if svc_factor != 1.0:                     # 省車鬆緊主旋鈕(係數,不改校準真值)
                 setup_sec = int(setup_sec * svc_factor)
@@ -342,6 +345,40 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
             if step["type"] == "pickup":
                 plan.setdefault(int(step["vehicle_id"]), []).append(int(step["id"]))
 
+    stops = None
+    if return_stops and len(df):
+        stops = []
+        omap = {o.id: o for o in orders}
+        vmap = {v.id: v for v in vehicles}
+        midnight = datetime.combine(service_date, time(0), tzinfo=TW)
+        has_wait = "waiting_time" in df.columns
+        seq_by_vid: dict[int, int] = {}
+        load_by_vid: dict[int, int] = {}
+        for _, step in df.iterrows():
+            typ = step["type"]
+            if typ not in ("pickup", "delivery"):
+                continue
+            vid = int(step["vehicle_id"])
+            arr = int(step["arrival"]) if step["arrival"] == step["arrival"] else 0
+            wait = int(step["waiting_time"]) if (has_wait and step["waiting_time"] == step["waiting_time"]) else 0
+            if typ == "pickup":
+                oid = int(step["id"]); o = omap.get(oid)
+                lng, lat = (o.pickup_lng, o.pickup_lat) if o else (None, None)
+                load_by_vid[vid] = load_by_vid.get(vid, 0) + (o.pax or 1 if o else 0)
+            else:
+                oid = int(step["id"]) - DELIVERY_OFFSET; o = omap.get(oid)
+                lng, lat = (o.dropoff_lng, o.dropoff_lat) if o else (None, None)
+                load_by_vid[vid] = load_by_vid.get(vid, 0) - (o.pax or 1 if o else 0)
+            seq = seq_by_vid.get(vid, 0) + 1; seq_by_vid[vid] = seq
+            v = vmap.get(vid)
+            stops.append({
+                "vehicle_id": vid, "plate": v.plate if v else None,
+                "seq": seq, "kind": typ, "order_id": oid,
+                "lng": lng, "lat": lat, "eta": midnight + timedelta(seconds=arr + wait),
+                "occupancy": load_by_vid[vid],
+                "is_support": bool(v and o and (v.home_fleet or "") != (o.fleet or "")),
+            })
+
     return {
         "fleet": fleet, "service_date": service_date, "window_min": window_min,
         "n_orders": len(orders),
@@ -353,6 +390,7 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
         "vroom_drive_sec": drive_sec,
         "unassigned_detail": unassigned_detail,
         "plan": plan,
+        "stops": stops,
     }
 
 
@@ -422,6 +460,44 @@ def run_batch(db: Session, window_min: int | None = None, progress=None) -> dict
     db.commit()
     return {"combos": len(combos), "compared": done, "skipped": skipped,
             "unassigned_records": n_unassigned}
+
+
+def persist_day(db: Session, service_date: date, window_min: int | None = None) -> dict:
+    """把某日『自動派遣結果』全數落地(標準流程步驟①,只清/重寫該日,勿動其他日):
+    對各車行跑 compare_day(=自動派遣)→ 寫入彙總 dispatch_comparison + 未派 unassigned_record
+    + **每車每停靠點明細 auto_dispatch_stop**。這是「每次自動派遣結果都存進 DB」的入口。"""
+    from app.models.auto_dispatch_stop import AutoDispatchStop
+    if window_min is None:
+        window_min = settings_svc.get(db, "pickup_window_min", 30)
+    run_at = datetime.now(TW)
+    for model in (DispatchComparison, UnassignedRecord, AutoDispatchStop):
+        db.query(model).filter(model.service_date == service_date).delete()
+    db.commit()
+
+    fleets = [f for (f,) in db.execute(
+        select(Order.fleet).where(Order.service_date == service_date, Order.status == "done")
+        .group_by(Order.fleet).order_by(Order.fleet)).all() if f]
+    res = {"service_date": service_date.isoformat(), "fleets": 0, "stops": 0,
+           "unassigned": 0, "human_vehicles": 0, "vroom_vehicles": 0}
+    for fl in fleets:
+        r = compare_day(db, fl, service_date, window_min, return_stops=True)
+        if not r:
+            continue
+        stops = r.pop("stops", None) or []
+        detail = r.pop("unassigned_detail", [])
+        r.pop("plan", None)
+        res["human_vehicles"] += r["human_vehicles"]
+        res["vroom_vehicles"] += r["vroom_vehicles"]
+        db.add(DispatchComparison(**r))
+        res["unassigned"] += _persist_unassigned(db, fl, service_date, window_min, detail)
+        for s in stops:
+            db.add(AutoDispatchStop(service_date=service_date, fleet=fl,
+                                    run_at=run_at, window_min=window_min, **s))
+        res["fleets"] += 1
+        res["stops"] += len(stops)
+    db.commit()
+    res["saved_vehicles"] = res["human_vehicles"] - res["vroom_vehicles"]
+    return res
 
 
 def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
@@ -521,7 +597,7 @@ def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
             continue
         p_idx, d_idx = ord_pts[o.id]
         welfare = o.vehicle_type == "welfare"
-        excl = 1 if o.allow_pool else EXCL_CAP
+        excl = 1 if o.pool_consent_at is not None else EXCL_CAP   # 共乘需同意留痕
         sec = svc_by_oid[o.id]
         setup_sec, teardown_sec = sec // 2, sec - sec // 2
         pw_end = min(s + window_min * 60, DAY_END)

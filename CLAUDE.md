@@ -44,10 +44,19 @@ docker compose exec backend python -m pytest -q   # 後端測試
    ⓪**地址編碼勘誤**(`geo_audit.audit_day`,已自動接在 `import_schedule` 末端;亦可 `POST /orders/geo-audit`):
    缺座標或離當日營運區中位點 >40km(疑似編到他縣市)者,產生修正版地址重編、挑最靠營運區的結果**自動回寫**
    → **判未派前先排除編碼錯誤**(規則:未派單先勘誤再重派,確認是否真無法派遣);
-   ①**跑自動派遣=對比引擎**(對該日各車行 `compare_day`,內部即 VROOM 自動派遣,**不動人工資料**)
-   並持久化 `dispatch_comparison`+`unassigned_record`(**只清/重算該日,勿用 `run_batch`——它會清空全部歷史**);
+   ①**跑自動派遣=對比引擎並落地**:呼叫 `comparison.persist_day(db, date)`(或 `POST /dispatch/comparison/persist-day`)——
+   對該日各車行 `compare_day`(內部即 VROOM 自動派遣,**不動人工資料**),把**彙總 `dispatch_comparison`
+   + 未派 `unassigned_record` + 每車每停靠點明細 `auto_dispatch_stop`**(每次自動派遣結果都存)一次寫齊
+   (**只清/重寫該日,勿用 `run_batch`——它會清空全部歷史且不含停靠明細**);讀停靠明細用 `GET /dispatch/auto-stops`;
    ② 檢視**人工比對**(🆚 /comparison)③ 檢視**逐車比對**(🚐 /vehicle-comparison,頁面即時算)。
    註:done 日**不可**跑實務 `run_dispatch`(會刪當日 route_stop、毀人工路線)。
+9. **共乘需同意(合規)**:自動派遣可否併車**以 `orders.pool_consent_at` 有值為準**(dispatcher/comparison 皆是;
+   `pool_require_consent` 設定為總開關)。**同意判定優先序**:①**固定趟(fixed_pins)派遣時凌駕**→ 強制可併,不受同意值限制
+   (dispatcher `if o.id in fixed_pins: excl=1`、comparison 姓名匹配分支 `excl=1`);② 匯入時**共乘組別有值**(實際成組)→ 推定同意;
+   ③ **共乘欄位含『同意』且非『不同意』**(`_is_consent`/`_pool_consent`)→ 同意;④ 皆無 → **預設不同意**。
+   同意者回填 `allow_pool`+`pool_consent_at`+`dispatch_history.pool_consent`。非固定趟的併車以 `pool_consent_at` 有值為準。
+   要開放某單共乘 → `/dispatch/pool-consent`(同時設 `allow_pool` + `pool_consent_at` 留痕)再重排。
+   實測:未同意不併對長照多為點對點,省車代價小(0–2 台/日),但遠郊集中單(金山/萬里)靠共乘,未同意會多幾筆未派。
 
 ## 推送到 GitHub
 Repo:https://github.com/regchung/EON_COLT(remote `origin` 已設,乾淨 https URL)。

@@ -59,6 +59,25 @@ def _find_col(cols: list[str], *needles: str) -> str | None:
     return None
 
 
+def _consent_col(cols: list[str]) -> str | None:
+    """找「共乘同意」欄:優先明確欄名;否則取含『共乘』但非『組別/訂單編號』的欄。"""
+    for pref in ("共乘同意", "願意共乘", "共乘意願", "是否共乘"):
+        c = _find_col(cols, pref)
+        if c:
+            return c
+    for c in cols:
+        s = str(c)
+        if "共乘" in s and "組別" not in s and "訂單" not in s:
+            return c
+    return None
+
+
+def _is_consent(val) -> bool:
+    """規則:值含『同意』且非『不同意』→ 同意;其餘(含空白/未知)→ 不同意(預設)。"""
+    s = str(val).strip() if val is not None else ""
+    return ("同意" in s) and ("不同意" not in s)
+
+
 def _roc_date(s: str | None) -> date | None:
     """民國 7 碼(1150623)→ 西元 date。"""
     s = _s(s)
@@ -97,6 +116,9 @@ def import_schedule(db: Session, content: bytes, filename: str,
         "plate": _find_col(cols, "車牌號碼"),
         "dphone": _find_col(cols, "駕駛電話"),
         "otype": _find_col(cols, "訂單類型"),
+        # 共乘同意來源(優先序):固定趟(派遣時凌駕)> 共乘組別有值(實際成組→推定同意)> 共乘欄位含「同意」> 預設不同意。
+        "consent": _consent_col(cols),
+        "pool_group": _find_col(cols, "共乘組別"),
     }
     missing = [k for k in ("date", "paddr", "daddr", "plate") if not C[k]]
     if missing:
@@ -157,6 +179,12 @@ def import_schedule(db: Session, content: bytes, filename: str,
             passenger = _s(r.get(C["name"])) if C["name"] else None
             paddr = _s(r.get(C["paddr"]))
             daddr = _s(r.get(C["daddr"]))
+            # 共乘同意(優先序):共乘組別有值(實際成組)→ 推定同意;否則共乘欄位含「同意」→ 同意;皆無 → 不同意。
+            # (固定趟的「凌駕」在派遣層處理:fixed_pins → 強制可併,不受此同意值限制。)
+            consent = bool(
+                (C["pool_group"] and _s(r.get(C["pool_group"])))
+                or (C["consent"] and _is_consent(r.get(C["consent"])))
+            )
             if not (paddr and daddr):
                 rep["errors"].append({"row": idx + 2, "error": "缺起點/迄點地址"})
                 continue
@@ -209,7 +237,10 @@ def import_schedule(db: Session, content: bytes, filename: str,
                 passenger_name=passenger, pickup_address=paddr, dropoff_address=daddr,
                 pickup_lng=p_lng, pickup_lat=p_lat, dropoff_lng=d_lng, dropoff_lat=d_lat,
                 pax=pax, vehicle_type="welfare" if welfare else "normal",
-                need_wheelchair=bool(wheelchair), allow_pool=True, status="done",
+                need_wheelchair=bool(wheelchair),
+                allow_pool=bool(consent), status="done",   # A:預設不同意(consent None/False → 不併)
+                pool_consent_at=pickup_dt if consent else None,
+                pool_consent_by="班表匯入" if consent else None,
                 assigned_vehicle_id=vehicle.id if vehicle else None,
             )
             db.add(order)
@@ -223,7 +254,7 @@ def import_schedule(db: Session, content: bytes, filename: str,
                 pickup_lng=p_lng, pickup_lat=p_lat, dropoff_lng=d_lng, dropoff_lat=d_lat,
                 vehicle_type_req=type_req, pax=pax, wheelchair_count=wheelchair,
                 distance_m=dist_km * 1000 if dist_km else None, est_minutes=est_min,
-                status=SERVED,
+                status=SERVED, pool_consent=consent,
             ))
             rep["imported"] += 1
         except Exception as e:  # noqa: BLE001

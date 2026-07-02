@@ -1,5 +1,5 @@
 """派遣相關端點(本階段:距離矩陣引擎驗證;下一步:VROOM 排班)。"""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from urllib.parse import quote
 
@@ -404,6 +404,45 @@ def comparison_list(fleet: str | None = None, date_from: date | None = None,
     ]
 
 
+@router.post("/comparison/persist-day")
+def comparison_persist_day(service_date: date, db: Session = Depends(get_db)):
+    """把某日『自動派遣結果』全數落地(標準流程步驟①):對各車行跑對比(=自動派遣),
+    寫入彙總 dispatch_comparison + 未派 unassigned_record + **每車每停靠點 auto_dispatch_stop**。
+    只清/重寫該日。回傳寫入統計。"""
+    return comparison.persist_day(db, service_date)
+
+
+@router.get("/auto-stops")
+def auto_stops(service_date: date, fleet: str | None = None, plate: str | None = None,
+               db: Session = Depends(get_db)):
+    """讀取某日已落地的自動派遣停靠明細(每車每上/下車點 + ETA + 在車人數 + 是否支援)。"""
+    from app.models.auto_dispatch_stop import AutoDispatchStop
+    q = select(AutoDispatchStop).where(AutoDispatchStop.service_date == service_date)
+    if fleet:
+        q = q.where(AutoDispatchStop.fleet == fleet)
+    if plate:
+        q = q.where(AutoDispatchStop.plate == plate)
+    rows = list(db.scalars(q.order_by(
+        AutoDispatchStop.fleet, AutoDispatchStop.vehicle_id, AutoDispatchStop.seq)).all())
+    oids = [r.order_id for r in rows if r.order_id]
+    omap = {o.id: o for o in db.scalars(select(Order).where(Order.id.in_(oids))).all()} if oids else {}
+    TW = timezone(timedelta(hours=8))
+    items = []
+    for r in rows:
+        o = omap.get(r.order_id)
+        items.append({
+            "fleet": r.fleet, "vehicle_id": r.vehicle_id, "plate": r.plate,
+            "seq": r.seq, "kind": r.kind, "order_id": r.order_id,
+            "passenger": o.passenger_name if o else None,
+            "address": (o.pickup_address if r.kind == "pickup" else o.dropoff_address) if o else None,
+            "eta": r.eta.astimezone(TW).strftime("%H:%M") if r.eta else None,
+            "occupancy": r.occupancy, "is_support": r.is_support,
+        })
+    return {"service_date": service_date.isoformat(), "count": len(items),
+            "run_at": rows[0].run_at.isoformat() if rows and rows[0].run_at else None,
+            "items": items}
+
+
 @router.get("/calibration")
 def calibration_view(db: Session = Depends(get_db)):
     """每趟作業時間/速度的歷史校準:回傳目前已套用值 + 重新分析的建議值。"""
@@ -667,6 +706,8 @@ def unassigned_list(service_date: date, fleet: str | None = None, db: Session = 
         o = omap.get(r.order_id)
         items.append({
             "id": r.id, "fleet": r.fleet,
+            "order_id": r.order_id,
+            "order_status": o.status if o else None,   # imported/scheduled=營運中可立即指派;done=僅唯讀建議
             "reason_code": r.reason_code, "reason_label": _REASON_LABEL.get(r.reason_code, r.reason_code),
             "human_plate": r.human_plate, "human_driver": r.human_driver,
             "pickup_time": o.pickup_time.strftime("%H:%M") if o and o.pickup_time else None,

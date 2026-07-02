@@ -351,12 +351,12 @@ def run_dispatch(db: Session, service_date: date, _isolation_override: bool | No
             out_of_service += 1
             continue
         pw_end = min(pw_end, day_end)   # 上車不得晚於 18:00
-        # 共乘需同意(設定可關閉):需同意但未同意者第二維度佔滿 → 獨佔整車。
+        # 共乘需同意(設定可關閉):以「同意留痕 pool_consent_at 有值」為準,無同意者第二維度佔滿 → 獨佔整車。
         # 派遣原則1:固定趟次可共乘 → 強制可併車(excl=1),不受同意限制。
         if o.id in fixed_pins:
             excl = 1
         else:
-            excl = EXCL_CAP if (prm["require_consent"] and not o.allow_pool) else 1
+            excl = EXCL_CAP if (prm["require_consent"] and o.pool_consent_at is None) else 1
         if o.occupancy_min:
             # 既定區塊(固定趟):以整趟佔用時間為服務時長 → 佔住司機整個時段,期間不插單;
             # 不設最長乘車上限。佔用時間用維護/來源值(如校車服務分鐘 180)。
@@ -393,7 +393,7 @@ def run_dispatch(db: Session, service_date: date, _isolation_override: bool | No
 
     # 進行中訂單:delivery-only job,以專屬技能硬鎖原車(乘客已在車上,初始載重佔位到下車)
     for o in ongoing:
-        excl = EXCL_CAP if (prm["require_consent"] and not o.allow_pool) else 1
+        excl = EXCL_CAP if (prm["require_consent"] and o.pool_consent_at is None) else 1
         skills = {LOCK_SKILL_BASE + o.assigned_vehicle_id}
         if _is_welfare(o):
             skills.add(1)

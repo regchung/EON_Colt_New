@@ -1,7 +1,7 @@
 """人工派遣歷史(由車隊平台匯出檔匯入)。保留作為經驗知識與人工 vs 自動對比的素材。"""
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Date, DateTime, Float, Integer, String, func
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, Integer, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -51,6 +51,7 @@ class DispatchHistory(Base):
     order_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     op_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    pool_consent: Mapped[bool | None] = mapped_column(Boolean)  # 共乘同意:None=未知、True=同意、False=不同意
     raw: Mapped[dict | None] = mapped_column(JSON)  # 整列保留(已去除身分證號)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
