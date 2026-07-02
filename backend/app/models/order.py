@@ -55,6 +55,9 @@ class Order(Base):
     )
     dispatch_seq: Mapped[int | None] = mapped_column(Integer)   # 該車的派遣順序
     eta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 預計到達上車點
+    # 跨車行支援留痕:本車行運能不足時,由他隊車支援;記錄出車車輛所屬車行 + 原因
+    support_fleet: Mapped[str | None] = mapped_column(String(20))  # ≠ fleet 時表示他隊支援;None=本車行/未派
+    dispatch_note: Mapped[str | None] = mapped_column(Text)        # 支援原因白話
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

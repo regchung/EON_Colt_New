@@ -7,7 +7,7 @@
 from datetime import date, datetime, timezone, timedelta
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.db.session import SessionLocal
@@ -286,3 +286,105 @@ def test_run_dispatch_wheelchair_only_order_uses_normal_vehicle(haversine, monke
     finally:
         _cleanup(db)
         db.close()
+
+
+def test_cross_fleet_support_labels_supported_orders(haversine):
+    """本車行運能不足→他隊支援 + 留痕:
+    神同行 1 車、新北 1 車;2 張獨佔的神同行單同時段 → 神同行車吃不下 1 張,
+    統一池由新北車支援,該單記 support_fleet=新北 + dispatch_note(運能不足)。"""
+    db = SessionLocal()
+    try:
+        _cleanup(db)
+        v1 = Vehicle(plate="TEST-V1", type="normal", seats=4, active=True, home_fleet="神同行",
+                     depot_lng=121.53, depot_lat=25.04, start_lng=121.53, start_lat=25.04,
+                     end_lng=121.53, end_lat=25.04)
+        v2 = Vehicle(plate="TEST-V2", type="normal", seats=4, active=True, home_fleet="新北",
+                     depot_lng=121.55, depot_lat=25.05, start_lng=121.55, start_lat=25.05,
+                     end_lng=121.55, end_lat=25.05)
+        db.add_all([v1, v2])
+        db.flush()
+        _add_drivers(db, v1.id, v2.id)
+        db.add_all([
+            ShiftException(vehicle_id=v1.id, ex_date=TEST_DATE, available=True),
+            ShiftException(vehicle_id=v2.id, ex_date=TEST_DATE, available=True),
+        ])
+        # 兩張獨佔(allow_pool=False)且同一上車時段 → 單一神同行車無法同時服務兩張
+        pts = [(121.54, 25.045, 121.56, 25.05), (121.535, 25.042, 121.55, 25.048)]
+        for i, (plng, plat, dlng, dlat) in enumerate(pts):
+            db.add(Order(
+                source_order_no=f"TEST-DISP-{i}", service_date=TEST_DATE, pickup_time=_dt(8),
+                pickup_window_min=15, passenger_name=f"神{i}",
+                pickup_address=f"上{i}", dropoff_address=f"下{i}",
+                pickup_lng=plng, pickup_lat=plat, dropoff_lng=dlng, dropoff_lat=dlat,
+                pax=1, vehicle_type="normal", allow_pool=False, status="imported", fleet="神同行"))
+        db.commit()
+
+        res = dispatcher.run_dispatch(db, TEST_DATE)
+        assert "error" not in res, res
+        assert res.get("assigned") == 2, "兩單應全派(本車行 1 + 他隊支援 1)"
+        assert res.get("supported_count") == 1, res
+        sup = res["supported"][0]
+        assert sup["from_fleet"] == "神同行" and sup["to_fleet"] == "新北", sup
+
+        db.expire_all()
+        rows = list(db.scalars(select(Order).where(Order.source_order_no.like("TEST-DISP-%"))).all())
+        supported = [o for o in rows if o.support_fleet]
+        assert len(supported) == 1
+        assert supported[0].support_fleet == "新北"
+        assert supported[0].assigned_vehicle_id == v2.id
+        assert "運能不足" in (supported[0].dispatch_note or "")
+    finally:
+        _cleanup(db)
+        db.close()
+
+
+def test_cross_fleet_support_off_no_labels(haversine, monkeypatch):
+    """cross_fleet_support 關 + 車隊隔離關:回統一池派遣(舊行為),
+    兩車皆可服務兩單 → 全派,但不做他隊支援留痕(supported 為空)。"""
+    db = SessionLocal()
+    try:
+        _cleanup(db)
+        monkeypatch.setattr(dispatcher.settings_svc, "dispatch_params",
+                            _params_with(dispatcher.settings_svc.dispatch_params, db,
+                                         cross_fleet_support=False, fleet_isolation=False))
+        v1 = Vehicle(plate="TEST-V1", type="normal", seats=4, active=True, home_fleet="神同行",
+                     depot_lng=121.53, depot_lat=25.04, start_lng=121.53, start_lat=25.04,
+                     end_lng=121.53, end_lat=25.04)
+        v2 = Vehicle(plate="TEST-V2", type="normal", seats=4, active=True, home_fleet="新北",
+                     depot_lng=121.55, depot_lat=25.05, start_lng=121.55, start_lat=25.05,
+                     end_lng=121.55, end_lat=25.05)
+        db.add_all([v1, v2])
+        db.flush()
+        _add_drivers(db, v1.id, v2.id)
+        db.add_all([
+            ShiftException(vehicle_id=v1.id, ex_date=TEST_DATE, available=True),
+            ShiftException(vehicle_id=v2.id, ex_date=TEST_DATE, available=True),
+        ])
+        pts = [(121.54, 25.045, 121.56, 25.05), (121.535, 25.042, 121.55, 25.048)]
+        for i, (plng, plat, dlng, dlat) in enumerate(pts):
+            db.add(Order(
+                source_order_no=f"TEST-DISP-{i}", service_date=TEST_DATE, pickup_time=_dt(8),
+                pickup_window_min=15, passenger_name=f"神{i}",
+                pickup_address=f"上{i}", dropoff_address=f"下{i}",
+                pickup_lng=plng, pickup_lat=plat, dropoff_lng=dlng, dropoff_lat=dlat,
+                pax=1, vehicle_type="normal", allow_pool=False, status="imported", fleet="神同行"))
+        db.commit()
+
+        res = dispatcher.run_dispatch(db, TEST_DATE)
+        assert "error" not in res, res
+        assert res.get("assigned") == 2, "統一池:兩車服務兩單 → 全派"
+        assert res.get("supported_count") == 0, "關閉時不做他隊支援留痕"
+        assert not (res.get("supported") or [])
+        db.expire_all()
+        rows = list(db.scalars(select(Order).where(Order.source_order_no.like("TEST-DISP-%"))).all())
+        assert all(o.support_fleet is None for o in rows)
+    finally:
+        _cleanup(db)
+        db.close()
+
+
+def _params_with(orig_fn, db, **overrides):
+    """回傳一個 dispatch_params 替身:沿用真實參數但覆寫指定鍵(供測試切換旗標)。"""
+    base = dict(orig_fn(db))
+    base.update(overrides)
+    return lambda _db: base

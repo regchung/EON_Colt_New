@@ -38,6 +38,8 @@ DEFAULTS: list[dict] = [
      "label": "車隊隔離派遣", "description": "關=集團統一派遣(跨區共乘,最省車);開=分車行派(台北車專派台北趟、新北專派新北趟)。僅隔離台北/新北;神同行/基隆/校車/日照/不拘不限區,由地理自然歸位、池滿可跨區。開啟換取各車行獨立管理與帳務清晰"},
     {"key": "fleet_isolation_fallback", "value": "true", "value_type": "bool", "group": "派遣規則",
      "label": "隔離未派自動跨區補救", "description": "僅在車隊隔離開啟時作用。開=若因隔離導致有單排不進本區池,當日自動回退為統一派遣重排,保證不因隔離而漏單;關=嚴格隔離(寧可未派也不跨區,交行控處理)"},
+    {"key": "cross_fleet_support", "value": "true", "value_type": "bool", "group": "派遣規則",
+     "label": "跨車行支援", "description": "開=自動派遣先以本車行(區域)運能派遣,本車行不足以全派時,開放公司其他車隊餘裕車支援,並於訂單記錄支援車行與原因(support_fleet/dispatch_note);關=不啟用本機制(回統一池派遣;若另開車隊隔離則依隔離設定)。"},
     {"key": "pool_require_consent", "value": "true", "value_type": "bool", "group": "共乘",
      "label": "共乘需同意", "description": "未同意者獨佔整車,不與他人併乘"},
     {"key": "pool_max_detour_min", "value": "15", "value_type": "float", "group": "共乘",
@@ -116,6 +118,7 @@ def dispatch_params(db: Session) -> dict:
         "service_factor": float(get(db, "service_time_factor", 1.0) or 1.0),
         "fleet_isolation": bool(get(db, "fleet_isolation", False)),
         "fleet_isolation_fallback": bool(get(db, "fleet_isolation_fallback", True)),
+        "cross_fleet_support": bool(get(db, "cross_fleet_support", True)),
     }
 
 

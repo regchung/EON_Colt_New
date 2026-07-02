@@ -48,9 +48,10 @@ _FLEET_REGION = {
     "基隆": "基隆", "不拘【基隆】": "基隆",
     "校車": "雙北", "日照": "雙北", "發隆興": "雙北", "樂格適": "雙北", "不拘【雙北】": "雙北",
 }
-# 只硬隔離「台北 / 新北」兩區;其餘(神同行/基隆/校車/日照/不拘=雙北)不限區,
-# 由地理自然歸位,各區池滿時可跨區承接(= 對小車隊的天然 fallback)。
-_ISO_IDX = {"台北": 0, "新北": 1}
+# 區域分群(本車行優先/隔離用):台北/新北/神同行/基隆 各自一區;
+# 校車/日照/發隆興/樂格適/不拘【雙北】= 雙北(其單可由台北或新北車執行)。
+# 用於「本車行優先」的第一階段派遣(cross_fleet_support)與舊「車隊隔離」功能。
+_ISO_IDX = {"台北": 0, "新北": 1, "神同行": 2, "基隆": 3}
 
 
 def _region_of(fleet: str | None) -> str:
@@ -58,21 +59,54 @@ def _region_of(fleet: str | None) -> str:
 
 
 def _order_fleet_skills(fleet: str | None) -> set:
-    """訂單需要的區域技能:只有台北/新北單有(限該區車);其餘單不限區(空集)。"""
+    """訂單需要的區域技能:單一區域(台北/新北/神同行/基隆)單需該區車;
+    雙北單(校車/日照/…)不限區(空集),台北或新北車皆可執行。"""
     reg = _region_of(fleet)
     return {FLEET_SKILL_BASE + _ISO_IDX[reg]} if reg in _ISO_IDX else set()
 
 
 def _vehicle_fleet_skills(home_fleet: str | None) -> set:
-    """車輛帶有的台北/新北服務技能;不拘雙北車兩者皆可;小車隊/其他不帶(僅服務不限區單)。"""
+    """車輛帶有的區域服務技能:單一區域車帶該區技能;不拘雙北車兼具台北+新北。"""
     reg = _region_of(home_fleet)
-    if reg == "台北":
-        return {FLEET_SKILL_BASE + 0}
-    if reg == "新北":
-        return {FLEET_SKILL_BASE + 1}
     if reg == "雙北":
-        return {FLEET_SKILL_BASE + 0, FLEET_SKILL_BASE + 1}   # 不拘雙北車:台北或新北皆可
+        return {FLEET_SKILL_BASE + 0, FLEET_SKILL_BASE + 1}   # 雙北車:台北或新北單皆可
+    if reg in _ISO_IDX:
+        return {FLEET_SKILL_BASE + _ISO_IDX[reg]}
     return set()
+
+
+def _label_cross_fleet_support(db: Session, service_date: date,
+                               short_fleets: set[str]) -> list[dict]:
+    """把「本車行運能不足、改由他隊車支援」的訂單留痕。
+
+    short_fleets = 第一階段(本車行優先派遣)有未派的車行集合。統一池重排後,
+    凡屬這些車行、且最終出車車輛所屬車行 ≠ 訂單車行者,即為他隊支援 →
+    記 support_fleet + dispatch_note(對重排結果穩定,不受哪一張單被搬動影響)。
+    於呼叫端(第二階段回來後)執行並 commit,回傳支援明細。"""
+    short = {f for f in short_fleets if f}
+    if not short:
+        return []
+    orders = list(db.scalars(
+        select(Order).where(
+            Order.service_date == service_date,
+            Order.fleet.in_(short),
+            Order.assigned_vehicle_id.is_not(None),
+        )).all())
+    vids = {o.assigned_vehicle_id for o in orders}
+    vmap = {v.id: v for v in db.scalars(
+        select(Vehicle).where(Vehicle.id.in_(vids))).all()} if vids else {}
+    supported: list[dict] = []
+    for o in orders:
+        v = vmap.get(o.assigned_vehicle_id)
+        if v is None or (v.home_fleet or "") == (o.fleet or ""):
+            continue
+        o.support_fleet = v.home_fleet
+        o.dispatch_note = (f"本車行〔{o.fleet or '未標'}〕運能不足,"
+                           f"由〔{v.home_fleet or '未標'}〕支援")
+        supported.append({"order_id": o.id, "from_fleet": o.fleet,
+                          "to_fleet": v.home_fleet})
+    db.commit()
+    return supported
 
 
 TW = timezone(timedelta(hours=8))   # 台灣時區(資料庫存 UTC,排班以 +08 牆鐘換算)
@@ -253,8 +287,16 @@ def run_dispatch(db: Session, service_date: date, _isolation_override: bool | No
 
     # 4) 組 VROOM 問題(營運參數由系統設定提供,可由管理者於設定頁調整)
     prm = settings_svc.dispatch_params(db)
-    # 車隊隔離:_isolation_override 為 fallback 二次派遣時強制關閉隔離之用
-    isolation = _isolation_override if _isolation_override is not None else prm.get("fleet_isolation", False)
+    # 分群派遣(本車行優先):
+    #  - 第一階段(outer call):cross_fleet_support 開 或 舊車隊隔離開 → 依區域分群,各單先由本車行/本區車服務。
+    #  - 第二階段(_isolation_override=False):統一池,不分群,承接第一階段運能不足的單(= 他隊支援)。
+    outer_pass = _isolation_override is None
+    support_on = prm.get("cross_fleet_support", True)
+    legacy_iso = prm.get("fleet_isolation", False)
+    if _isolation_override is not None:
+        apply_group = bool(_isolation_override)   # 二次派遣強制關閉分群
+    else:
+        apply_group = support_on or legacy_iso
     day_start, day_end = prm["day_start_sec"], prm["day_end_sec"]
     # 司機可提早 driver_margin 發車(去接服務時段開頭的 06:00 早單);
     # 收車端保留完成緩衝,讓「18:30 前已上車」的在途趟次可跨過完成(乘客上車仍限服務時段)。
@@ -275,8 +317,8 @@ def run_dispatch(db: Session, service_date: date, _isolation_override: bool | No
             skills.add(LOCK_SKILL_BASE + v.id)   # 鎖住其進行中行程的專屬技能
         if v.id in pin_vehicle_ids:
             skills.add(PIN_SKILL_BASE + v.id)    # 固定行程:接受被釘給此車的單
-        if isolation:
-            skills |= _vehicle_fleet_skills(v.home_fleet)   # 車隊隔離:此車可服務的台北/新北技能
+        if apply_group:
+            skills |= _vehicle_fleet_skills(v.home_fleet)   # 分群:此車可服務的區域技能
         kwargs = dict(
             id=v.id,
             profile="car",
@@ -339,8 +381,8 @@ def run_dispatch(db: Session, service_date: date, _isolation_override: bool | No
         sk = {1} if _is_welfare(o) else set()
         if o.id in fixed_pins:
             sk.add(PIN_SKILL_BASE + fixed_pins[o.id])   # 固定行程:硬綁指定車
-        elif isolation:
-            sk |= _order_fleet_skills(o.fleet)   # 車隊隔離:台北/新北單需對應區域的車
+        elif apply_group:
+            sk |= _order_fleet_skills(o.fleet)   # 分群:單一區域單需對應區域的車(本車行優先)
         problem.add_shipment(
             pickup, delivery,
             amount=vroom.Amount([max(1, o.pax or 1), excl]),
@@ -383,6 +425,8 @@ def run_dispatch(db: Session, service_date: date, _isolation_override: bool | No
         o.dispatch_seq = None
         o.eta = None
         o.status = "imported"
+        o.support_fleet = None
+        o.dispatch_note = None
 
     by_id = {o.id: o for o in orders}
     ongoing_by_id = {o.id: o for o in ongoing}
@@ -455,12 +499,23 @@ def run_dispatch(db: Session, service_date: date, _isolation_override: bool | No
     assigned_ids = {o.id for o in orders if o.assigned_vehicle_id is not None}
     unassigned = [o.id for o in orders if o.id not in assigned_ids]
 
-    # 車隊隔離未派自動 fallback:若因隔離而有未派,且開啟 fallback → 當日回退統一派遣重排,
-    # 保證不因隔離漏單(統一派遣的指派數 ≥ 隔離)。_isolation_override=None 才觸發,避免無限遞迴。
-    if (isolation and _isolation_override is None and unassigned
-            and prm.get("fleet_isolation_fallback")):
-        res = run_dispatch(db, service_date, _isolation_override=False)
+    # 第二階段(他隊支援 / 隔離補救):第一階段分群後仍有未派 → 當日回退統一池重排,
+    # 由公司其他車隊餘裕運能承接;統一池的指派數 ≥ 分群,保證不因分群漏單。
+    #  - cross_fleet_support 開:預設行為(本車行優先→他隊支援),並把支援單留痕。
+    #  - 舊 fleet_isolation + fallback:維持原補救語意。
+    # _isolation_override=None(outer)才觸發,避免無限遞迴。
+    trigger_second = (
+        outer_pass and apply_group and unassigned
+        and (support_on or (legacy_iso and prm.get("fleet_isolation_fallback")))
+    )
+    if trigger_second:
+        short_fleets = {by_id[oid].fleet for oid in unassigned if oid in by_id}  # 運能不足的車行
+        res = run_dispatch(db, service_date, _isolation_override=False)   # 統一池重排(權威結果)
+        supported = _label_cross_fleet_support(db, service_date, short_fleets)   # 標記他隊支援 + 原因
         res["isolation_fallback"] = True
+        res["cross_fleet_support"] = support_on
+        res["supported"] = supported
+        res["supported_count"] = len(supported)
         return res
 
     return {
@@ -476,4 +531,6 @@ def run_dispatch(db: Session, service_date: date, _isolation_override: bool | No
         "skipped_no_coords": [o.id for o in skipped],
         "total_duration_sec": int(sol.summary.duration),
         "routes": routes_report,
+        "supported": [],
+        "supported_count": 0,
     }

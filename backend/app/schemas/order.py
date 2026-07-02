@@ -51,4 +51,6 @@ class OrderOut(OrderBase):
     id: int
     dispatch_seq: int | None = None
     eta: datetime | None = None
+    support_fleet: str | None = None   # 跨車行支援:出車車輛所屬車行(≠ fleet 時)
+    dispatch_note: str | None = None   # 支援原因白話
     created_at: datetime
