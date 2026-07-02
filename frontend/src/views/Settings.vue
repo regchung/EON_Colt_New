@@ -57,6 +57,25 @@ async function applyCal() {
 }
 onMounted(loadCal)
 
+// --- 派遣積極度預設(①貼近人工 → ②溫和 → ③積極省車)---
+const presets = ref(null)
+const presetBusy = ref(false)
+async function loadPresets() {
+  try { const { data } = await client.get('/settings/dispatch-presets'); presets.value = data } catch { /* 略過 */ }
+}
+async function applyPreset(stage) {
+  presetBusy.value = true
+  try {
+    const { data } = await client.post('/settings/dispatch-preset', null, { params: { stage } })
+    await loadPresets()
+    await load()   // 重載參數值(service_time_factor/pickup_window_min 已變)
+    flash(`已套用「${data.label}」(係數 ${data.service_time_factor}／上車窗 ${data.pickup_window_min} 分)`)
+  } catch (e) {
+    error.value = e.response?.data?.detail || '套用失敗'
+  } finally { presetBusy.value = false }
+}
+onMounted(loadPresets)
+
 async function save(it) {
   savingKey.value = it.key
   try {
@@ -103,6 +122,33 @@ async function removeItem(it) {
 
   <div v-if="error" class="alert alert-danger">{{ error }}</div>
   <div v-if="toast" class="alert alert-success py-2">{{ toast }}</div>
+
+  <!-- 派遣積極度預設:循序漸進讓使用者接受自動派遣 -->
+  <div v-if="presets" class="card shadow-sm mb-3 border-primary">
+    <div class="card-header py-2 fw-semibold bg-primary-subtle">
+      🎚️ 派遣積極度(一鍵預設)
+      <span class="small text-muted ms-2">目前:係數 {{ presets.current.service_time_factor }}／上車窗 {{ presets.current.pickup_window_min }} 分
+        <span v-if="presets.active_stage" class="badge bg-primary">階段 {{ presets.active_stage }}</span></span>
+    </div>
+    <div class="card-body py-2">
+      <p class="small text-muted mb-2">
+        用「省車鬆緊」兩個主參數(每趟作業係數 + 上車窗)一鍵切換。<b>先讓自動派遣貼近人工</b>建立信任,成熟後再收割省車。
+      </p>
+      <div class="row g-2">
+        <div v-for="p in presets.presets" :key="p.stage" class="col-12 col-md-4">
+          <div class="border rounded p-2 h-100" :class="presets.active_stage === p.stage ? 'border-primary bg-primary-subtle' : ''">
+            <div class="fw-semibold">{{ p.label }}</div>
+            <div class="text-muted small mb-2">{{ p.desc }}</div>
+            <div class="small mb-2">係數 {{ p.service_time_factor }}／窗 {{ p.pickup_window_min }} 分</div>
+            <button class="btn btn-sm w-100" :class="presets.active_stage === p.stage ? 'btn-primary' : 'btn-outline-primary'"
+                    :disabled="presetBusy || presets.active_stage === p.stage" @click="applyPreset(p.stage)">
+              {{ presets.active_stage === p.stage ? '目前使用中' : '套用' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <!-- 每趟工時:歷史校準(依車行×福祉/一般)-->
   <div v-if="cal" class="card shadow-sm mb-3 border-info">

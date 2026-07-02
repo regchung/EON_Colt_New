@@ -60,3 +60,42 @@ def delete_setting(key: str, db: Session = Depends(get_db), _: User = Depends(re
     db.delete(row)
     db.commit()
     return {"deleted": key}
+
+
+# 派遣積極度預設(循序漸進讓使用者接受自動派遣):一鍵設 service_time_factor + pickup_window_min
+DISPATCH_PRESETS = {
+    1: {"label": "① 貼近人工", "service_time_factor": "2.0", "pickup_window_min": "9",
+        "desc": "自動派遣結果最接近人工(省車最少),供初期建立信任"},
+    2: {"label": "② 溫和優化", "service_time_factor": "1.55", "pickup_window_min": "9",
+        "desc": "現行預設,開始展現省車效益(約省 15%)"},
+    3: {"label": "③ 積極省車", "service_time_factor": "1.0", "pickup_window_min": "30",
+        "desc": "成熟後收割最大省車(約省 30%)"},
+}
+
+
+@router.get("/dispatch-presets")
+def dispatch_presets(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """派遣積極度預設清單 + 目前值。"""
+    cur = {"service_time_factor": settings_svc.get(db, "service_time_factor"),
+           "pickup_window_min": settings_svc.get(db, "pickup_window_min")}
+    active = next((s for s, p in DISPATCH_PRESETS.items()
+                   if str(p["service_time_factor"]) == str(cur["service_time_factor"])
+                   and str(p["pickup_window_min"]) == str(cur["pickup_window_min"])), None)
+    return {"current": cur, "active_stage": active,
+            "presets": [{"stage": s, **p} for s, p in DISPATCH_PRESETS.items()]}
+
+
+@router.post("/dispatch-preset")
+def apply_dispatch_preset(stage: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """套用派遣積極度預設(stage 1/2/3):設 service_time_factor + pickup_window_min。"""
+    p = DISPATCH_PRESETS.get(stage)
+    if not p:
+        raise HTTPException(status_code=400, detail="stage 須為 1/2/3")
+    settings_svc.seed_defaults(db)
+    for key in ("service_time_factor", "pickup_window_min"):
+        row = db.get(AppSetting, key)
+        if row:
+            row.value = p[key]
+    db.commit()
+    return {"applied_stage": stage, "label": p["label"],
+            "service_time_factor": p["service_time_factor"], "pickup_window_min": p["pickup_window_min"]}
