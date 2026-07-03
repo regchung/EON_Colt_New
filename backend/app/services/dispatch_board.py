@@ -15,9 +15,12 @@ from app.models.driver import Driver
 from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.order import Order
 from app.models.vehicle import Vehicle
+from app.services import matrix as matrix_svc
 from app.services import roster as roster_svc
 
 TW = timezone(timedelta(hours=8))
+_HANDLING_SEC = 60        # 下車後上下車處理緩衝(秒)
+_REACH_GRACE_SEC = 0      # 可達性容差(秒);>0 更寬鬆
 _DEFAULT_DUR_MIN = 40   # 無 est 時的預設單趟占用(分)
 
 
@@ -92,24 +95,52 @@ def board(db: Session, service_date: date, source: str = "human") -> dict:
             "support_fleet": o.support_fleet,   # 跨車行支援留痕(他隊車服務時 ≠ fleet)
         }
 
+    # OSRM 可達性衝突:用真實車程判「前趟下車後,趕不趕得到下一趟上車」(取代固定佔用重疊)。
+    # 建一次 OSRM 矩陣(全體已派單的上/下車點)。
+    _pi: dict[tuple, int] = {}
+    _pts: list[tuple[float, float]] = []
+
+    def _pt(lng, lat) -> int:
+        k = (round(lng, 6), round(lat, 6))
+        if k not in _pi:
+            _pi[k] = len(_pts)
+            _pts.append(k)
+        return _pi[k]
+
+    ord_idx: dict[int, tuple[int, int]] = {}
+    for o in assigned:
+        if o.pickup_lng is not None and o.dropoff_lng is not None:
+            ord_idx[o.id] = (_pt(o.pickup_lng, o.pickup_lat), _pt(o.dropoff_lng, o.dropoff_lat))
+    _mat = matrix_svc.build_matrix(_pts) if _pts else {"durations": []}
+    _DUR = _mat.get("durations") or []
+
+    def _drive(a, b) -> int:   # 兩點間車程(秒);缺值視為 0
+        if a is None or b is None:
+            return 0
+        c = _DUR[a][b]
+        return int(c) if c is not None else 0
+
     vehicles = []
     for vid in sorted(veh_ids, key=lambda x: (vmap[x].home_fleet or "" if x in vmap else "", vmap[x].plate or "" if x in vmap else "")):
         v = vmap.get(vid)
         trips_o = sorted(by_veh.get(vid, []), key=lambda o: o.pickup_time or service_date)
-        # 衝突偵測:占用區間 [pickup, pickup+dur] 重疊
+        # 衝突偵測:前趟(上車→下車車程 + 處理)後,以 OSRM 車程趕到本趟上車點;來不及 → 衝突
         conflict_ids = set()
-        spans = []
+        prev = None   # (order, pickup_idx, dropoff_idx, pickup_sec)
         for o in trips_o:
             st = _mins(o.pickup_time)
-            if st is None:
+            if st is None or o.id not in ord_idx:
+                prev = None
                 continue
-            dur = est.get(o.source_order_no, _DEFAULT_DUR_MIN)
-            spans.append((st, st + int(dur), o.id))
-        spans.sort()
-        for i in range(1, len(spans)):
-            if spans[i][0] < spans[i - 1][1]:   # 起點早於前一趟結束 → 重疊
-                conflict_ids.add(spans[i][2])
-                conflict_ids.add(spans[i - 1][2])
+            st_sec = st * 60
+            pu, do = ord_idx[o.id]
+            if prev is not None:
+                po, ppu, pdo, pst = prev
+                reach = pst + _drive(ppu, pdo) + _HANDLING_SEC + _drive(pdo, pu)
+                if reach > st_sec + _REACH_GRACE_SEC:
+                    conflict_ids.add(o.id)
+                    conflict_ids.add(po.id)
+            prev = (o, pu, do, st_sec)
         trips = []
         for o in trips_o:
             t = trip(o)
