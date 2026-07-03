@@ -518,6 +518,7 @@ def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
     """
     if window_min is None:
         window_min = settings_svc.get(db, "pickup_window_min", 30)
+    svc_factor = float(settings_svc.get(db, "service_time_factor", 1.0) or 1.0)   # 派遣積極度旋鈕
     orders = list(db.scalars(
         select(Order).where(
             Order.fleet == fleet, Order.service_date == service_date,
@@ -606,7 +607,8 @@ def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
         p_idx, d_idx = ord_pts[o.id]
         welfare = o.vehicle_type == "welfare"
         excl = 1 if o.pool_consent_at is not None else EXCL_CAP   # 共乘需同意留痕
-        sec = svc_by_oid[o.id]
+        # 省車鬆緊主旋鈕:每趟作業 × service_time_factor(與 compare_day/落地一致,不改校準真值)
+        sec = int(svc_by_oid[o.id] * svc_factor)
         setup_sec, teardown_sec = sec // 2, sec - sec // 2
         pw_end = min(s + window_min * 60, DAY_END)
         deliv_upper = _max_ride_upper(int(dur[p_idx][d_idx]), pw_end)   # 限制最長乘車時間
