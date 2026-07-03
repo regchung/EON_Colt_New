@@ -95,7 +95,7 @@ def summary_workbook(db: Session, date_from: date, date_to: date, fleet: str | N
     return buf.getvalue()
 
 
-def by_vehicle_workbook(db: Session, fleet: str, service_date: date, window_min: int = 30) -> bytes:
+def by_vehicle_workbook(db: Session, fleet: str, service_date: date, window_min: int | None = None) -> bytes:
     r = comparison_svc.compare_day_by_vehicle(db, fleet, service_date, window_min)
     wb = Workbook()
     ws = wb.active

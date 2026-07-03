@@ -6,7 +6,7 @@ import client from '../api/client'
 const days = ref([])          // [{fleet, service_date, n_orders, saved_vehicles}]
 const fleet = ref('')
 const serviceDate = ref('')
-const windowMin = ref(30)
+const windowMin = ref(null)   // 預設用系統上車窗(與看板/落地一致);null → 載入後由設定填入
 
 const data = ref(null)
 const loading = ref(false)
@@ -16,6 +16,16 @@ const fleets = computed(() => [...new Set(days.value.map((d) => d.fleet))].sort(
 const datesForFleet = computed(() =>
   days.value.filter((d) => d.fleet === fleet.value).map((d) => d.service_date),
 )
+
+async function loadWindow() {
+  // 逐車比對預設用「系統上車窗」,與看板/落地報表一致。優先由設定填入顯示值(限管理員);
+  // 非管理員讀不到設定 → windowMin 保持 null,load() 不帶參數,後端自動用系統上車窗。
+  try {
+    const { data } = await client.get('/settings')
+    const w = data.find((s) => s.key === 'pickup_window_min')
+    if (w && windowMin.value == null) windowMin.value = Number(w.value)
+  } catch { /* 無管理員權限:留 null,由後端套系統值 */ }
+}
 
 async function loadDays() {
   // 有成行單 + 人工派遣紀錄的(車行,日期);不依賴對比批次,匯入班表後即時可選
@@ -34,7 +44,10 @@ async function load() {
   data.value = null
   try {
     const { data: r } = await client.get('/dispatch/comparison/by-vehicle', {
-      params: { fleet: fleet.value, service_date: serviceDate.value, window_min: windowMin.value },
+      params: {
+        fleet: fleet.value, service_date: serviceDate.value,
+        ...(windowMin.value != null ? { window_min: windowMin.value } : {}),   // null → 後端用系統上車窗
+      },
       timeout: 120000,
     })
     data.value = r
@@ -50,6 +63,7 @@ function onFleetChange() {
 }
 
 onMounted(async () => {
+  await loadWindow()
   await loadDays()
   await load()
 })

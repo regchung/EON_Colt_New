@@ -505,8 +505,10 @@ def persist_day(db: Session, service_date: date, window_min: int | None = None) 
 
 
 def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
-                           window_min: int = 30) -> dict | None:
+                           window_min: int | None = None) -> dict | None:
     """逐車對比:同一天、同一組實體車輛,左=人工實際派遣、右=VROOM 自動派遣。
+
+    window_min=None 時讀系統參數 pickup_window_min(與落地/看板一致,避免報表對不上)。
 
     人工用車從 dispatch_history 的車牌建出 → VROOM 在同一車隊池上重排,
     因此每台車(以車牌對應)可左右並排,標出「哪幾趟換了車」。
@@ -514,6 +516,8 @@ def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
 
     回傳 None 表示當日無成行單或查無人工用車。
     """
+    if window_min is None:
+        window_min = settings_svc.get(db, "pickup_window_min", 30)
     orders = list(db.scalars(
         select(Order).where(
             Order.fleet == fleet, Order.service_date == service_date,

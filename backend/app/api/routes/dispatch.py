@@ -494,7 +494,7 @@ def comparison_available_days(db: Session = Depends(get_db)):
 def comparison_by_vehicle(
     fleet: str,
     service_date: date,
-    window_min: int = 30,
+    window_min: int | None = None,   # None=用系統 pickup_window_min(與看板/落地一致)
     db: Session = Depends(get_db),
 ):
     """逐車對比:某車行某日,左=人工實際派遣、右=VROOM 自動派遣(同一車隊池)。
@@ -520,7 +520,7 @@ def comparison_export_range(date_from: date, date_to: date, fleet: str | None = 
 
 
 @router.get("/comparison/by-vehicle/export")
-def comparison_by_vehicle_export(fleet: str, service_date: date, window_min: int = 30,
+def comparison_by_vehicle_export(fleet: str, service_date: date, window_min: int | None = None,
                                  db: Session = Depends(get_db)):
     """匯出某日某車行的逐車對比明細(Excel)。"""
     data = comparison_export.by_vehicle_workbook(db, fleet, service_date, window_min)
