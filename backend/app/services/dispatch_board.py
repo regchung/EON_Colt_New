@@ -138,10 +138,13 @@ def _board_auto(db: Session, service_date: date) -> dict:
     from app.models.auto_dispatch_stop import AutoDispatchStop
     from app.models.unassigned_record import UnassignedRecord
 
-    stops = list(db.scalars(select(AutoDispatchStop).where(
-        AutoDispatchStop.service_date == service_date,
-        AutoDispatchStop.kind == "pickup").order_by(
+    allstops = list(db.scalars(select(AutoDispatchStop).where(
+        AutoDispatchStop.service_date == service_date).order_by(
         AutoDispatchStop.vehicle_id, AutoDispatchStop.seq)).all())
+    stops = [s for s in allstops if s.kind == "pickup"]   # 趟次以上車列為準
+    # 真實下車時刻:(車, 訂單) → 下車 ETA 分鐘;用於「真實佔用時段」衝突判定(非固定 40 分)
+    drop_min = {(s.vehicle_id, s.order_id): _mins(s.eta)
+                for s in allstops if s.kind == "delivery" and s.eta is not None}
     oids = [s.order_id for s in stops if s.order_id]
     omap = {o.id: o for o in db.scalars(select(Order).where(Order.id.in_(oids))).all()} if oids else {}
     vmap = {v.id: v for v in db.scalars(select(Vehicle)).all()}
@@ -168,10 +171,13 @@ def _board_auto(db: Session, service_date: date) -> dict:
         slist = sorted(slist, key=lambda s: (s.eta is None, s.eta))
         spans, trips = [], []
         for s in slist:
-            o = omap.get(s.order_id)
             st = _mins(s.eta)
             if st is not None:
-                spans.append((st, st + _DEFAULT_DUR_MIN, s.order_id))
+                # 真實佔用時段 = 上車 → 下車(取自 auto_dispatch_stop);缺下車才退用固定估算
+                end = drop_min.get((vid, s.order_id))
+                if end is None or end <= st:
+                    end = st + _DEFAULT_DUR_MIN
+                spans.append((st, end, s.order_id))
         conflict_ids = set()
         spans.sort()
         for i in range(1, len(spans)):
