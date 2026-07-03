@@ -589,73 +589,55 @@ def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
         for o in orders
     }
 
-    problem = vroom.Input()
-    problem.set_durations_matrix("car", dur.astype(np.uint32))
-    for v in vehicles:
-        kw = dict(id=v.id, profile="car",
-                  capacity=[max(1, v.seats or 1), EXCL_CAP],
-                  skills={1} if v.type == "welfare" else set(),
-                  time_window=vroom.TimeWindow(DAY_START, DAY_END + COMPLETION_BUFFER),
-                  max_travel_time=MAX_WORK_SEC)
-        if v.id in veh_se:
-            kw["start"], kw["end"] = veh_se[v.id]
-        problem.add_vehicle(vroom.Vehicle(**kw))
-    for o in orders:
-        s = _secs_tw(o.pickup_time)
-        if s < DAY_START or s > DAY_END:
-            continue
-        p_idx, d_idx = ord_pts[o.id]
-        welfare = o.vehicle_type == "welfare"
-        excl = 1 if o.pool_consent_at is not None else EXCL_CAP   # 共乘需同意留痕
-        # 省車鬆緊主旋鈕:每趟作業 × service_time_factor(與 compare_day/落地一致,不改校準真值)
-        sec = int(svc_by_oid[o.id] * svc_factor)
-        setup_sec, teardown_sec = sec // 2, sec - sec // 2
-        pw_end = min(s + window_min * 60, DAY_END)
-        deliv_upper = _max_ride_upper(int(dur[p_idx][d_idx]), pw_end)   # 限制最長乘車時間
-        deliv_kw = dict(id=o.id + DELIVERY_OFFSET, location=d_idx, default_service=teardown_sec)
-        if deliv_upper is not None:
-            deliv_kw["time_windows"] = [vroom.TimeWindow(s, deliv_upper)]
-        problem.add_shipment(
-            vroom.ShipmentStep(id=o.id, location=p_idx, default_service=setup_sec,
-                               time_windows=[vroom.TimeWindow(s, pw_end)]),
-            vroom.ShipmentStep(**deliv_kw),
-            amount=vroom.Amount([max(1, o.pax or 1), excl]),
-            skills={1} if welfare else set(),
-            priority=100,
-        )
+    # === 自動側改讀「落地資料」auto_dispatch_stop(單一真相來源:與看板/營運報表/未派分析一致)===
+    # 不再即時重跑 VROOM;逐車比對 = 呈現 persist_day 已落地的自動派遣結果。
+    from app.models.auto_dispatch_stop import AutoDispatchStop
+    midnight = datetime.combine(service_date, time(0), tzinfo=TW)
+    a_rows = list(db.scalars(select(AutoDispatchStop).where(
+        AutoDispatchStop.service_date == service_date, AutoDispatchStop.fleet == fleet,
+    ).order_by(AutoDispatchStop.vehicle_id, AutoDispatchStop.eta, AutoDispatchStop.seq)).all())
 
-    sol = problem.solve(exploration_level=5, nb_threads=4)
-    df = sol.routes
+    # 自動可能用到「人工車池外」的車(固定行程加入指定司機車)→ 補進 vehicles/plate_by_vid/veh_se
+    extra = {r.vehicle_id for r in a_rows} - {v.id for v in vehicles}
+    if extra:
+        for v in db.scalars(select(Vehicle).where(Vehicle.id.in_(extra))).all():
+            vehicles.append(v)
+            plate_by_vid[v.id] = v.plate
+            s = _first((v.start_lng, v.start_lat), (v.depot_lng, v.depot_lat))
+            e = _first((v.end_lng, v.end_lat), (v.start_lng, v.start_lat), (v.depot_lng, v.depot_lat))
+            if s is not None:
+                veh_se[v.id] = (pt(*s), pt(*e) if e is not None else pt(*s))
+        # 若新增了座標點 → 補算矩陣(避免索引越界)
+        if len(points) > dur.shape[0]:
+            m2 = matrix_svc.build_matrix(points)
+            dur = np.array([[int(round(c)) if c is not None else UNROUTABLE for c in row]
+                            for row in m2["durations"]], dtype=np.int64)
+            if sf and sf != 1.0:
+                dur = np.minimum((dur.astype(np.float64) * sf).round(), UNROUTABLE).astype(np.int64)
+            _d2 = m2.get("distances")
+            dist = np.array([[float(c) if c is not None else 0.0 for c in row] for row in _d2],
+                            dtype=float) if _d2 else None
 
-    # 還原每車路徑(位置序)+ 服務趟次順序
-    seq_by_vid: dict[int, list[int]] = {}
+    seq_by_vid: dict[int, list] = {}
     picks_by_vid: dict[int, list[int]] = {}
-    stops_by_vid: dict[int, list[dict]] = {}   # 真實停靠序(交錯上/下車)+ 到點時刻
-    if len(df):
-        has_wait = "waiting_time" in df.columns
-        for _, step in df.iterrows():
-            vid = int(step["vehicle_id"])
-            typ = step["type"]
-            # 到點時刻 = arrival + waiting(時間窗等待):上下車「實際發生」時刻,
-            # 非車輛提早到達時刻(否則早到等窗會誤顯示成提早上車、虛增在車時間)
-            arrival = int(step["arrival"]) if step["arrival"] == step["arrival"] else 0
-            wait = int(step["waiting_time"]) if (has_wait and step["waiting_time"] == step["waiting_time"]) else 0
-            sec = arrival + wait
-            if typ == "start":
-                seq_by_vid.setdefault(vid, []).append(veh_se.get(vid, (None, None))[0])
-            elif typ == "pickup":
-                oid = int(step["id"])
-                seq_by_vid.setdefault(vid, []).append(ord_pts[oid][0])
-                picks_by_vid.setdefault(vid, []).append(oid)
-                stops_by_vid.setdefault(vid, []).append({"kind": "pickup", "oid": oid, "sec": sec})
-            elif typ == "delivery":
-                oid = int(step["id"]) - DELIVERY_OFFSET
-                seq_by_vid.setdefault(vid, []).append(ord_pts[oid][1])
-                stops_by_vid.setdefault(vid, []).append({"kind": "delivery", "oid": oid, "sec": sec})
-            elif typ == "end":
-                seq_by_vid.setdefault(vid, []).append(veh_se.get(vid, (None, None))[1])
+    stops_by_vid: dict[int, list[dict]] = {}
+    for r in a_rows:
+        oid = r.order_id
+        if oid not in ord_by_id:
+            continue
+        vid = r.vehicle_id
+        sec = int((r.eta - midnight).total_seconds()) if r.eta else 0
+        if r.kind == "pickup":
+            picks_by_vid.setdefault(vid, []).append(oid)
+            stops_by_vid.setdefault(vid, []).append({"kind": "pickup", "oid": oid, "sec": sec})
+            seq_by_vid.setdefault(vid, []).append(ord_pts[oid][0])
+        else:
+            stops_by_vid.setdefault(vid, []).append({"kind": "delivery", "oid": oid, "sec": sec})
+            seq_by_vid.setdefault(vid, []).append(ord_pts[oid][1])
+    for vid in list(seq_by_vid):   # 路徑首末補上出車起點/收車終點
+        vs, ve = veh_se.get(vid, (None, None))
+        seq_by_vid[vid] = [vs] + seq_by_vid[vid] + [ve]
 
-    # 自動:訂單 → 車牌
     auto_plate_by_no: dict[str, str] = {}
     for vid, picks in picks_by_vid.items():
         plate = plate_by_vid.get(vid)
@@ -663,22 +645,19 @@ def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
             no = ord_by_id[oid].source_order_no
             if no:
                 auto_plate_by_no[no] = plate
-    assigned_auto_ids = {oid for picks in picks_by_vid.values() for oid in picks}
-    has_welfare = any(v.type == "welfare" for v in vehicles)
-    centroid = _median_point(orders)
-    saturated = len(picks_by_vid) >= len(vehicles)
+
+    # 自動未派:讀 unassigned_record(與未派分析/看板一致)
     auto_unassigned = []
-    for o in orders:
-        if o.id in assigned_auto_ids:
-            continue
-        p_idx, d_idx = ord_pts[o.id]
-        code, detail = _classify_unassigned(
-            o, _secs_tw(o.pickup_time), int(dur[p_idx][d_idx]), has_welfare, centroid, saturated)
+    for u in db.scalars(select(UnassignedRecord).where(
+            UnassignedRecord.fleet == fleet, UnassignedRecord.service_date == service_date)).all():
+        o = ord_by_id.get(u.order_id)
         auto_unassigned.append({
-            "order_id": o.id, "source_order_no": o.source_order_no, "pickup_hm": _hm(o.pickup_time),
-            "passenger": o.passenger_name,
-            "pickup_addr": o.pickup_address, "dropoff_addr": o.dropoff_address,
-            "reason_code": code, "reason_detail": detail,
+            "order_id": u.order_id, "source_order_no": u.source_order_no,
+            "pickup_hm": _hm(o.pickup_time) if o else None,
+            "passenger": o.passenger_name if o else None,
+            "pickup_addr": o.pickup_address if o else None,
+            "dropoff_addr": o.dropoff_address if o else None,
+            "reason_code": u.reason_code, "reason_detail": u.reason_detail,
         })
 
     # 人工:每車牌的趟次(dispatch_history)

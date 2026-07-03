@@ -12,8 +12,11 @@ from sqlalchemy import delete
 
 from app.core.config import settings
 from app.db.session import SessionLocal
+from app.models.auto_dispatch_stop import AutoDispatchStop
+from app.models.dispatch_comparison import DispatchComparison
 from app.models.dispatch_history import DispatchHistory
 from app.models.order import Order
+from app.models.unassigned_record import UnassignedRecord
 from app.models.vehicle import Vehicle
 from app.services import comparison
 
@@ -30,6 +33,8 @@ def _cleanup(db):
     db.execute(delete(DispatchHistory).where(DispatchHistory.source_order_no.like("TEST-CMP-%")))
     db.execute(delete(Order).where(Order.source_order_no.like("TEST-CMP-%")))
     db.execute(delete(Vehicle).where(Vehicle.plate.like("RTSTCMP%")))
+    for M in (DispatchComparison, UnassignedRecord, AutoDispatchStop):   # 落地表(逐車比對現讀落地)
+        db.execute(delete(M).where(M.service_date == CMP_DATE))
     db.commit()
 
 
@@ -127,7 +132,8 @@ def test_compare_day_by_vehicle_structure(haversine):
     try:
         _cleanup(db)
         _seed(db)
-        r = comparison.compare_day_by_vehicle(db, FLEET, CMP_DATE, window_min=30)
+        comparison.persist_day(db, CMP_DATE)   # 逐車比對現讀落地 → 先跑對比落地
+        r = comparison.compare_day_by_vehicle(db, FLEET, CMP_DATE)
         assert r is not None
         assert r["n_orders"] == 3
         assert r["distance_available"] is True   # haversine 提供距離
