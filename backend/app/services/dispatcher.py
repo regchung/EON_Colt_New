@@ -355,6 +355,8 @@ def run_dispatch(db: Session, service_date: date, _isolation_override: bool | No
         # 派遣原則1:固定趟次可共乘 → 強制可併車(excl=1),不受同意限制。
         if o.id in fixed_pins:
             excl = 1
+        elif o.fleet in prm["auto_consent_fleets"]:
+            excl = 1   # 車行層級自動共乘同意(遠郊集中單如神同行)
         else:
             excl = EXCL_CAP if (prm["require_consent"] and o.pool_consent_at is None) else 1
         if o.occupancy_min:

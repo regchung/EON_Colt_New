@@ -42,6 +42,8 @@ DEFAULTS: list[dict] = [
      "label": "跨車行支援", "description": "開=自動派遣先以本車行(區域)運能派遣,本車行不足以全派時,開放公司其他車隊餘裕車支援,並於訂單記錄支援車行與原因(support_fleet/dispatch_note);關=不啟用本機制(回統一池派遣;若另開車隊隔離則依隔離設定)。"},
     {"key": "pool_require_consent", "value": "true", "value_type": "bool", "group": "共乘",
      "label": "共乘需同意", "description": "未同意者獨佔整車,不與他人併乘"},
+    {"key": "pool_auto_consent_fleets", "value": "", "value_type": "str", "group": "共乘",
+     "label": "車行層級自動共乘同意", "description": "填車行名稱(逗號分隔),這些車行的訂單自動視為同意共乘。遠郊集中單(如神同行金山/萬里)乘客實務上已併乘,開啟可顯著降低未派(實測 30 日未派 ↓37%、用車不增)。留空=不啟用,一律依個別訂單同意。改後需對相關日重跑落地(persist_day)才反映於報表"},
     {"key": "pool_max_detour_min", "value": "15", "value_type": "float", "group": "共乘",
      "label": "共乘最大繞路(分)", "description": "推薦共乘時每位乘客可接受的繞路上限"},
     {"key": "recurring_min_days", "value": "3", "value_type": "int", "group": "共乘",
@@ -101,6 +103,12 @@ def list_all(db: Session) -> list[AppSetting]:
     return list(db.scalars(select(AppSetting).order_by(AppSetting.group, AppSetting.key)).all())
 
 
+def pool_auto_consent_fleets(db: Session) -> set[str]:
+    """車行層級自動共乘同意的車行集合(逗號或頓號分隔)。留空 = 空集。"""
+    raw = get(db, "pool_auto_consent_fleets", "") or ""
+    return {f.strip() for f in raw.replace("、", ",").split(",") if f.strip()}
+
+
 def dispatch_params(db: Session) -> dict:
     """即時派遣用的營運參數(已換算成秒/旗標)。"""
     return {
@@ -119,6 +127,7 @@ def dispatch_params(db: Session) -> dict:
         "fleet_isolation": bool(get(db, "fleet_isolation", False)),
         "fleet_isolation_fallback": bool(get(db, "fleet_isolation_fallback", True)),
         "cross_fleet_support": bool(get(db, "cross_fleet_support", True)),
+        "auto_consent_fleets": pool_auto_consent_fleets(db),
     }
 
 

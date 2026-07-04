@@ -125,7 +125,8 @@ def _classify_unassigned(o, secs: int, direct_sec: int, has_welfare: bool,
 
 
 def compare_day(db: Session, fleet: str, service_date: date, window_min: int | None = None,
-                return_plan: bool = False, return_stops: bool = False) -> dict | None:
+                return_plan: bool = False, return_stops: bool = False,
+                force_no_pool: bool = False, force_pool: bool = False) -> dict | None:
     """回傳對比指標 dict;當日無成行單或無車則回 None。
 
     return_stops=True 時額外回傳 stops=[{vehicle_id,plate,seq,kind,order_id,lng,lat,eta,
@@ -140,6 +141,9 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
     if window_min is None:
         window_min = settings_svc.get(db, "pickup_window_min", 30)
     svc_factor = float(settings_svc.get(db, "service_time_factor", 1.0) or 1.0)
+    # 車行層級自動共乘同意:此車行的訂單一律視為可併(遠郊集中單如神同行);仍不影響固定趟。
+    if not force_pool and fleet in settings_svc.pool_auto_consent_fleets(db):
+        force_pool = True
     orders = list(db.scalars(
         select(Order).where(
             Order.fleet == fleet, Order.service_date == service_date,
@@ -285,8 +289,10 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
             deliv_upper = _max_ride_upper(int(arr[p_idx][d_idx]), pw_end)
             o_skills = ({1} if welfare else set()) | {pin_skill[o.id]}
         else:
-            # 共乘需同意:以 pool_consent_at 有值為準,未同意者第二維度佔滿 EXCL_CAP → 獨佔整車
-            excl = 1 if o.pool_consent_at is not None else EXCL_CAP
+            # 共乘需同意:以 pool_consent_at 有值為準,未同意者第二維度佔滿 EXCL_CAP → 獨佔整車。
+            # force_no_pool(what-if/貼近人工):強制所有非固定趟獨佔整車(不併車)。
+            # force_pool(what-if/放寬共乘):強制所有非固定趟可併車(如遠郊車行開放共乘)。
+            excl = 1 if (force_pool or (o.pool_consent_at is not None and not force_no_pool)) else EXCL_CAP
             setup_sec, teardown_sec = _svc_split(o)   # 每趟作業:歷史校準(車行×福祉)
             if svc_factor != 1.0:                     # 省車鬆緊主旋鈕(係數,不改校準真值)
                 setup_sec = int(setup_sec * svc_factor)

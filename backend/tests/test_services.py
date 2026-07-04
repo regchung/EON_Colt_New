@@ -59,8 +59,23 @@ def test_settings_seed_get_dispatch_params():
         assert p["max_work_sec"] == 8 * 3600
         assert p["day_start_sec"] == 6 * 3600
         assert isinstance(p["require_consent"], bool)
+        assert isinstance(p["auto_consent_fleets"], set)   # 車行層級自動共乘同意
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("", set()),
+    (None, set()),
+    ("神同行", {"神同行"}),
+    ("神同行, 基隆", {"神同行", "基隆"}),
+    ("神同行、基隆", {"神同行", "基隆"}),   # 頓號亦可
+    ("  神同行 ,, ", {"神同行"}),           # 去空白/略過空項
+])
+def test_pool_auto_consent_fleets_parse(monkeypatch, raw, expected):
+    """車行層級自動共乘同意:逗號/頓號分隔解析,去空白、略過空項。"""
+    monkeypatch.setattr(settings_svc, "get", lambda db, k, d=None: raw if k == "pool_auto_consent_fleets" else d)
+    assert settings_svc.pool_auto_consent_fleets(None) == expected
 
 
 # ---------- roster._secs ----------

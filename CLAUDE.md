@@ -57,6 +57,10 @@ docker compose exec backend python -m pytest -q   # 後端測試
    同意者回填 `allow_pool`+`pool_consent_at`+`dispatch_history.pool_consent`。非固定趟的併車以 `pool_consent_at` 有值為準。
    要開放某單共乘 → `/dispatch/pool-consent`(同時設 `allow_pool` + `pool_consent_at` 留痕)再重排。
    實測:未同意不併對長照多為點對點,省車代價小(0–2 台/日),但遠郊集中單(金山/萬里)靠共乘,未同意會多幾筆未派。
+   **車行層級自動共乘同意**(`pool_auto_consent_fleets` 設定,逗號/頓號分隔車行名):列入的車行訂單一律視為可併
+   (dispatcher `elif o.fleet in prm["auto_consent_fleets"]: excl=1`、comparison `compare_day(force_pool)`),不影響固定趟。
+   遠郊(神同行)實測開啟後 30 日未派 ↓37%(127→80)、用車 −1。改設定後需對相關日重跑 `persist_day` 才反映於報表。
+   實證依據見 `docs/findings-chaining-2026-07-04.md`(含跨單併車指標更正:人工1.7% vs 自動0.0%,皆點對點)。
 
 ## 推送到 GitHub
 Repo:https://github.com/regchung/EON_COLT(remote `origin` 已設,乾淨 https URL)。
