@@ -21,6 +21,7 @@ import DriverVehicle from '../views/DriverVehicle.vue'
 import DispatchBoard from '../views/DispatchBoard.vue'
 import Login from '../views/Login.vue'
 import DriverRoute from '../views/DriverRoute.vue'
+import DailyRoster from '../views/DailyRoster.vue'
 
 const routes = [
   { path: '/', name: 'dashboard', component: Dashboard, meta: { title: '儀表板' } },
@@ -43,6 +44,7 @@ const routes = [
   { path: '/users', name: 'users', component: Users, meta: { title: '使用者管理', roles: ['admin'] } },
   { path: '/settings', name: 'settings', component: Settings, meta: { title: '參數設定', roles: ['admin'] } },
   { path: '/driver-route', name: 'driver-route', component: DriverRoute, meta: { title: '我的路單', roles: ['driver'] } },
+  { path: '/daily-roster', name: 'daily-roster', component: DailyRoster, meta: { title: '每日出勤名冊', roles: ['admin', 'dispatcher'] } },
   { path: '/login', name: 'login', component: Login, meta: { public: true, layout: false } },
 ]
 

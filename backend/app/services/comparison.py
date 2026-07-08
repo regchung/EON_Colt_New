@@ -124,9 +124,20 @@ def _classify_unassigned(o, secs: int, direct_sec: int, has_welfare: bool,
             "放寬上車時間窗、或校正既定區塊起點為路線起點,多可排入")
 
 
+# 鄰近車行支援對應表:本車行滿載時可調入的鄰近車行(台北↔新北↔基隆,台北✗基隆)
+ADJACENT_FLEETS: dict[str, list[str]] = {
+    "台北": ["新北"],
+    "新北": ["台北", "基隆"],
+    "基隆": ["新北"],
+}
+
+
 def compare_day(db: Session, fleet: str, service_date: date, window_min: int | None = None,
                 return_plan: bool = False, return_stops: bool = False,
-                force_no_pool: bool = False, force_pool: bool = False) -> dict | None:
+                force_no_pool: bool = False, force_pool: bool = False,
+                support_vehicles: list | None = None,
+                vehicles_override: list | None = None,
+                order_ids_filter: set[int] | None = None) -> dict | None:
     """回傳對比指標 dict;當日無成行單或無車則回 None。
 
     return_stops=True 時額外回傳 stops=[{vehicle_id,plate,seq,kind,order_id,lng,lat,eta,
@@ -137,6 +148,8 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
 
     return_plan=True 時額外回傳 plan={vehicle_id: [order_id,...](依路線順序)},
     供「系統派遣口卡」呈現系統最佳化後每車每趟(批次不傳此旗標,零額外負擔)。
+
+    support_vehicles:鄰近車行閒置車輛列表;只在本車行滿載仍有未派單時由 persist_day 傳入。
     """
     if window_min is None:
         window_min = settings_svc.get(db, "pickup_window_min", 30)
@@ -151,16 +164,37 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
             Order.pickup_lng.is_not(None), Order.dropoff_lng.is_not(None),
         ).order_by(Order.id)
     ).all())
+    if order_ids_filter is not None:
+        orders = [o for o in orders if o.id in order_ids_filter]
     if not orders:
         return None
 
+    # 人工歷史用車數(供比對統計用);實際派遣一律使用全部啟用車輛
     plates = [p for (p,) in db.execute(
         select(DispatchHistory.plate.distinct()).where(
             DispatchHistory.fleet == fleet, DispatchHistory.service_date == service_date,
             DispatchHistory.status == SERVED, DispatchHistory.plate.like("R%"),
         )
     ).all() if p]
-    vehicles = list(db.scalars(select(Vehicle).where(Vehicle.plate.in_(plates))).all()) if plates else []
+
+    # 車輛車池:vehicles_override 直接指定(多段式優先派遣用);否則取全部啟用未停派車輛
+    if vehicles_override is not None:
+        vehicles = list(vehicles_override)
+    else:
+        vehicles = list(db.scalars(
+            select(Vehicle).where(
+                Vehicle.home_fleet == fleet,
+                Vehicle.active.is_(True),
+                Vehicle.suspended.is_(False),
+            )
+        ).all())
+        if not vehicles:
+            vehicles = list(db.scalars(
+                select(Vehicle).where(
+                    Vehicle.home_fleet == fleet,
+                    Vehicle.active.is_(True),
+                )
+            ).all())
 
     # 既定區塊(固定趟):occupancy_min 有值 → 釘到 assigned_vehicle_id。
     # 確保被釘車輛在集合內;給每筆固定趟一個唯一 skill,只有該車具此 skill → 強制釘車,
@@ -199,6 +233,13 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
         v = db.get(Vehicle, vid)
         if v is not None:
             vehicles.append(v)
+
+    # 加入鄰近車行支援車輛(本車行無法服務所有訂單時由 persist_day 傳入)
+    if support_vehicles:
+        have_ids = {v.id for v in vehicles}
+        for sv in support_vehicles:
+            if sv.id not in have_ids:
+                vehicles.append(sv)
 
     if not vehicles:
         return None
@@ -400,6 +441,22 @@ def compare_day(db: Session, fleet: str, service_date: date, window_min: int | N
     }
 
 
+def _merge_pass(r1: dict, r2: dict) -> dict:
+    """合併兩段派遣結果(Pass1=獎助, Pass2=特約同車行)。
+    r2 只涵蓋 r1 的未派訂單子集;合併後的未派=r2 的未派,stops=兩段合計。"""
+    merged = dict(r1)
+    merged["stops"] = (r1.get("stops") or []) + (r2.get("stops") or [])
+    merged["unassigned_detail"] = r2.get("unassigned_detail") or []
+    merged["vroom_unassigned"] = len(merged["unassigned_detail"])
+    # 重算用車數(合計不重複 vehicle_id)
+    vids = {s["vehicle_id"] for s in merged["stops"] if s["kind"] == "pickup"}
+    merged["vroom_vehicles"] = len(vids)
+    merged["saved_vehicles"] = merged["human_vehicles"] - merged["vroom_vehicles"]
+    # 累加行駛時間
+    merged["vroom_drive_sec"] = (r1.get("vroom_drive_sec") or 0) + (r2.get("vroom_drive_sec") or 0)
+    return merged
+
+
 def _persist_unassigned(db: Session, fleet: str, service_date: date, window_min: int,
                         detail: list[dict]) -> int:
     """把某日未派明細寫入 unassigned_record,並關聯人工派遣的車/駕駛。"""
@@ -486,10 +543,76 @@ def persist_day(db: Session, service_date: date, window_min: int | None = None) 
         fleets = [f for (f,) in db.execute(
             select(Order.fleet).where(Order.service_date == service_date, Order.status == "done")
             .group_by(Order.fleet).order_by(Order.fleet)).all() if f]
+
+        # 第一階段:各車行三段式優先派遣(獎助 → 特約同車行 → 特約鄰近)
+        first_pass: dict[str, dict] = {}
         for fl in fleets:
-            r = compare_day(db, fl, service_date, window_min, return_stops=True)
-            if not r:
+            # 取得該車行所有啟用未停派車輛
+            all_fl_v = list(db.scalars(
+                select(Vehicle).where(
+                    Vehicle.home_fleet == fl,
+                    Vehicle.active.is_(True),
+                    Vehicle.suspended.is_(False),
+                )
+            ).all())
+            subsidized = [v for v in all_fl_v if (v.vehicle_source or "") == "獎助"]
+            contracted = [v for v in all_fl_v if (v.vehicle_source or "") != "獎助"]
+
+            # Pass A: 獎助車(若無獎助車則直接用全部)
+            pool_a = subsidized if subsidized else all_fl_v
+            r = compare_day(db, fl, service_date, window_min, return_stops=True,
+                            vehicles_override=pool_a)
+
+            # Pass B: 獎助未派 + 特約同車行
+            if r and r.get("vroom_unassigned", 0) > 0 and contracted:
+                unassigned_ids = {d["order_id"] for d in r.get("unassigned_detail", [])}
+                r2 = compare_day(db, fl, service_date, window_min, return_stops=True,
+                                 vehicles_override=contracted,
+                                 order_ids_filter=unassigned_ids)
+                if r2:
+                    r = _merge_pass(r, r2)
+
+            if r:
+                first_pass[fl] = r
+
+        # 第二階段:有未派單且鄰近車行有閒置車 → 調入支援重跑
+        final_results: dict[str, dict] = dict(first_pass)
+        for fl, r in first_pass.items():
+            if r.get("vroom_unassigned", 0) == 0:
                 continue
+            adj_fleets = ADJACENT_FLEETS.get(fl, [])
+            if not adj_fleets:
+                continue
+            # 蒐集鄰近車行閒置特約車(第一階段未用到的;優先規則:他區特約最後)
+            support_vids: set[int] = set()
+            for adj_fl in adj_fleets:
+                if adj_fl not in first_pass:
+                    continue
+                used_in_adj = {s["vehicle_id"] for s in (first_pass[adj_fl].get("stops") or [])}
+                adj_vehicles = list(db.scalars(
+                    select(Vehicle).where(
+                        Vehicle.home_fleet == adj_fl,
+                        Vehicle.active.is_(True),
+                        Vehicle.suspended.is_(False),
+                    )
+                ).all())
+                # 其他區只調閒置的特約車(獎助車留守本區)
+                support_vids.update(
+                    v.id for v in adj_vehicles
+                    if v.id not in used_in_adj and (v.vehicle_source or "") != "獎助"
+                )
+            if not support_vids:
+                continue
+            unassigned_ids = {d["order_id"] for d in r.get("unassigned_detail", [])}
+            support_list = list(db.scalars(select(Vehicle).where(Vehicle.id.in_(support_vids))).all())
+            r2 = compare_day(db, fl, service_date, window_min, return_stops=True,
+                             support_vehicles=support_list,
+                             order_ids_filter=unassigned_ids)
+            if r2 and r2.get("vroom_unassigned", 9999) < r.get("vroom_unassigned", 9999):
+                final_results[fl] = _merge_pass(r, r2)  # 支援後更好才採用
+
+        # 寫入最終結果
+        for fl, r in final_results.items():
             stops = r.pop("stops", None) or []
             detail = r.pop("unassigned_detail", [])
             r.pop("plan", None)
@@ -543,7 +666,15 @@ def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
             DispatchHistory.status == SERVED, DispatchHistory.plate.like("R%"),
         )
     ).all() if p]
-    vehicles = list(db.scalars(select(Vehicle).where(Vehicle.plate.in_(plates))).all()) if plates else []
+    vehicles = list(db.scalars(
+        select(Vehicle).where(
+            Vehicle.home_fleet == fleet,
+            Vehicle.active.is_(True),
+            Vehicle.suspended.is_(False),
+        )
+    ).all()) or list(db.scalars(
+        select(Vehicle).where(Vehicle.plate.in_(plates))
+    ).all()) if plates else []
     if not vehicles:
         return None
     plate_by_vid = {v.id: v.plate for v in vehicles}

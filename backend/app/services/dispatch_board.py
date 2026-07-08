@@ -189,6 +189,25 @@ def _board_auto(db: Session, service_date: date) -> dict:
         if dn:
             drv_by_veh[a.vehicle_id] = dn.name
 
+    # 共乘對:同一車上,若乙的上車 ETA ≤ 甲的下車 ETA → 共乘同行,重疊屬正常(VROOM 已驗可行)
+    pool_pairs: set[tuple[int, int]] = set()
+    veh_pickups: dict[int, list] = {}
+    for s in stops:
+        veh_pickups.setdefault(s.vehicle_id, []).append(s)
+    for vid_key, plist in veh_pickups.items():
+        plist_sorted = sorted(plist, key=lambda s: (s.eta is None, s.eta))
+        for i, pa in enumerate(plist_sorted):
+            da_min = drop_min.get((vid_key, pa.order_id))
+            if da_min is None:
+                continue
+            for pb in plist_sorted[i + 1:]:
+                pb_min = _mins(pb.eta)
+                if pb_min is None:
+                    continue
+                if pb_min <= da_min:   # 乙上車時甲還在車上 → 共乘
+                    pool_pairs.add((pa.order_id, pb.order_id))
+                    pool_pairs.add((pb.order_id, pa.order_id))
+
     # 逐車行對比:同一車可被多車行各自使用 → 按(車輛×車行)分欄,避免跨車行合併成假衝突
     by_veh: dict[tuple, list] = {}
     for s in stops:
@@ -213,7 +232,10 @@ def _board_auto(db: Session, service_date: date) -> dict:
         spans.sort()
         for i in range(1, len(spans)):
             if spans[i][0] < spans[i - 1][1]:
-                conflict_ids.add(spans[i][2]); conflict_ids.add(spans[i - 1][2])
+                # 共乘同行的重疊屬正常,不視為衝突
+                if (spans[i][2], spans[i - 1][2]) not in pool_pairs:
+                    conflict_ids.add(spans[i][2]); conflict_ids.add(spans[i - 1][2])
+        pool_oids = {oid for oid, _ in pool_pairs}
         for s in slist:
             o = omap.get(s.order_id)
             trips.append({
@@ -225,6 +247,7 @@ def _board_auto(db: Session, service_date: date) -> dict:
                 "status": "auto", "fleet": o.fleet if o else None,
                 "support_fleet": (v.home_fleet if (v and o and (v.home_fleet or "") != (o.fleet or "")) else None),
                 "conflict": s.order_id in conflict_ids,
+                "pooled": s.order_id in pool_oids,
             })
         vehicles.append({
             "vehicle_id": vid, "col_key": f"{vid}-{fl or ''}",

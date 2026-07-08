@@ -159,6 +159,7 @@ async function onDrop(toVid) {
              draggable="true" @dragstart="onDragStart(t.order_id, v.vehicle_id)">
           <div class="d-flex justify-content-between"><b>{{ t.time }}</b>
             <span>
+              <span v-if="t.pooled" class="badge bg-info text-dark" title="共乘">共</span>
               <span v-if="t.welfare" class="badge bg-warning text-dark">福</span>
               <span v-if="t.status === 'ongoing'" class="badge bg-success">進</span>
             </span>

@@ -49,6 +49,7 @@ const navGroups = [
     { to: '/vehicles', label: '車輛管理', icon: '🚐', roles: dsp },
     { to: '/drivers', label: '司機管理', icon: '🧑‍✈️', roles: dsp },
     { to: '/driver-vehicle', label: '司機車輛', icon: '🚗', roles: dsp },
+    { to: '/daily-roster', label: '每日出勤名冊', icon: '📤', roles: dsp },
     { to: '/roster', label: '班表', icon: '📅', roles: dsp },
     { to: '/addresses', label: '地址簿', icon: '📍', roles: dsp },
   ] },
