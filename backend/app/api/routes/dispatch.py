@@ -30,6 +30,7 @@ from app.services import (
 )
 from app.services import vehicle_suggest as vehicle_suggest_svc
 from app.services import settings as app_settings
+from app.services import roster as roster_svc
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
 
@@ -977,12 +978,12 @@ def _plan_from_compute(db: Session, service_date: date, fleet: str | None, plate
 
 @router.get("/daily-tasks")
 def daily_tasks(service_date: date, fleet: str | None = None, plate: str | None = None,
-                source: str = "history", db: Session = Depends(get_db)):
+                source: str = "plan", db: Session = Depends(get_db)):
     """每日車輛任務清單(口卡):依車行 → 每台車 → 依上車時間排序的任務。
 
     source:
-      - history(預設):人工派遣紀錄(dispatch_history,僅成行)。
-      - plan:系統當前指派(orders.assigned_vehicle_id;含未來自動排班日)。
+      - plan(預設):系統當前指派(orders.assigned_vehicle_id;含未來自動排班日)。
+      - history:人工派遣紀錄(dispatch_history,僅成行)。
     乘客姓名/電話由訂單關聯。可依日期(必填)、車行、車牌過濾。
     """
     if source == "plan":
