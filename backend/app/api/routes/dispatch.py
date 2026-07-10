@@ -840,15 +840,26 @@ def board_meta(db: Session = Depends(get_db)):
 
 @router.get("/daily-tasks/meta")
 def daily_tasks_meta(db: Session = Depends(get_db)):
-    """口卡查詢的過濾選項:資料日期範圍 + 車行清單(供前端預設日期與下拉)。"""
-    mn, mx = db.execute(
+    """口卡查詢的過濾選項:資料日期範圍 + 車行清單(供前端預設日期與下拉)。
+    優先從 orders 取有排班資料的日期範圍；歷史資料(dispatch_history)作為補充。"""
+    # plan 模式：從 orders 取已排班日期
+    plan_mn, plan_mx = db.execute(
+        select(func.min(Order.service_date), func.max(Order.service_date))
+        .where(Order.assigned_vehicle_id.is_not(None))
+    ).one()
+    # history 模式：從 dispatch_history 取
+    hist_mn, hist_mx = db.execute(
         select(func.min(DispatchHistory.service_date), func.max(DispatchHistory.service_date))
         .where(DispatchHistory.status == _DT_SERVED)
     ).one()
-    fleets = [f for (f,) in db.execute(
-        select(DispatchHistory.fleet.distinct())
-        .where(DispatchHistory.fleet.is_not(None)).order_by(DispatchHistory.fleet)
-    ).all()]
+    mn = min(d for d in [plan_mn, hist_mn] if d) if any([plan_mn, hist_mn]) else None
+    mx = max(d for d in [plan_mx, hist_mx] if d) if any([plan_mx, hist_mx]) else None
+    # 車行：合併兩來源
+    plan_fleets = {f for (f,) in db.execute(
+        select(Order.fleet.distinct()).where(Order.fleet.is_not(None))).all()}
+    hist_fleets = {f for (f,) in db.execute(
+        select(DispatchHistory.fleet.distinct()).where(DispatchHistory.fleet.is_not(None))).all()}
+    fleets = sorted(plan_fleets | hist_fleets)
     return {"min_date": mn.isoformat() if mn else None,
             "max_date": mx.isoformat() if mx else None, "fleets": fleets}
 
