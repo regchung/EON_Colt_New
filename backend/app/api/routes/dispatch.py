@@ -52,9 +52,9 @@ def run(service_date: date, ai: bool = False, db: Session = Depends(get_db)):
 
 @router.get("/export")
 def export_dispatch(service_date: date, fleet: str | None = None, layout: str = "single",
-                    source: str = "auto", db: Session = Depends(get_db)):
+                    source: str = "human", db: Session = Depends(get_db)):
     """匯出某日派遣表(Excel)。fleet 空=全車行;layout=single|per_vehicle;
-    source=auto(自動派遣落地,客戶回饋用)|human(人工實際指派)。"""
+    source=human(讀 Order.assigned_vehicle_id,預設)|auto(AutoDispatchStop 落地表)。"""
     data = dispatch_export.build_workbook(
         db, service_date, (fleet or None), per_vehicle=(layout == "per_vehicle"), source=source)
     suffix = "每車表" if layout == "per_vehicle" else "總表"
@@ -810,16 +810,12 @@ def daily_tasks_meta(db: Session = Depends(get_db)):
 
 
 def _plan_drv_by_veh(db: Session, service_date: date) -> dict:
-    """車 → (司機名, 電話);Driver.vehicle_id 為底,當日 DriverVehicleAssignment 覆寫。"""
-    out: dict[int, tuple] = {}
-    for d in db.scalars(select(Driver).where(Driver.vehicle_id.is_not(None))).all():
-        out.setdefault(d.vehicle_id, (d.name, d.phone))
-    for a in db.scalars(select(DriverVehicleAssignment).where(
-            DriverVehicleAssignment.service_date == service_date)).all():
-        dn = db.get(Driver, a.driver_id)
-        if dn:
-            out[a.vehicle_id] = (dn.name, dn.phone)
-    return out
+    """車 → (司機名, 電話);從當日出勤名冊(ShiftException.driver_id)讀取。"""
+    return {
+        vid: (info["name"], info["phone"])
+        for vid, info in roster_svc.driver_for_date(db, service_date).items()
+        if info.get("name")
+    }
 
 
 def _plan_order_task(o: Order) -> dict:

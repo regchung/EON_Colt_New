@@ -48,15 +48,34 @@
 - 程式:`dispatcher` `veh_day_start = day_start - margin`;`veh_day_end = day_end + completion_buffer`。
 - 實測(2026-06-22):05:30 發車讓 06:00 桃園早單排入,未派 5→4、已派 202→203(用 38 車)。
 
-## 原則 6:只派給「當天有司機」的車
-- 班表(roster)是以**車輛**排的,可能有「有班表但沒司機」的車;沒司機的車實際開不了。
-- 派遣只納入**當天有司機**的車(司機預設車 `Driver.vehicle_id` + 當日輪車 `DriverVehicleAssignment`)。
-- 安全退路:若整個車隊查無任何司機對應,則不過濾(避免整日無法派遣)。
-- 程式:`dispatcher._vehicles_with_driver` 過濾 `duty`。
-- 實測 2026-06-23:過濾前 35 車(6 台無司機)→ 過濾後 **32 車全有司機、仍 240 單全派**(更省車)。
-- **無班表退路**:當完全無值勤班表(未建 roster)時,改以「全部 active 且有司機之車」為可用池
-  (而非保守視為全不出勤),避免空名冊導致大量未派;有班表時仍只用當日出勤車。
-  實測 6/24:退路前可用 16 車、未派 35 → 退路後 35 車、未派 2。
+## 原則 6:出勤名冊是唯一司機-車輛對應來源（2026-07-10 架構更新）
+
+### 舊架構（已廢除）
+- `Driver.vehicle_id`：司機預設車（靜態欄位）
+- `DriverVehicleAssignment`：當日輪車指派（動態覆寫）
+- 派遣前呼叫 `_vehicles_with_driver()` 過濾出「有司機的車」
+
+### 新架構
+- **`Driver.vehicle_id` 欄位已移除**；司機主檔不再記錄「開哪台車」
+- **`ShiftException.driver_id`**：每日出勤名冊記錄「誰開這台車」，同時是：
+  - 派遣可用車的來源（`available=True` 且在名冊的車才出勤）
+  - 司機顯示的來源（看板、報表、口卡）
+- 出勤名冊由每日 Excel 匯入（`每日司機出勤.xlsx`），腳本同時寫入 `vehicle_id`（車牌查對）和 `driver_id`（姓名查對）
+
+### 派遣過濾邏輯（現行）
+```
+roster_svc.available_vehicles(db, date)   →  {vehicle_id: (start_sec, end_sec)}
+    ↓ available=True 且 ex_date=當日
+    ↓ 排除 suspended 車輛
+    → VROOM 可用車池
+```
+- **未建班表 → 直接拒絕派遣**（回傳錯誤訊息），不再退回全部 active 車
+- 固定行程釘選車也必須在當日名冊中；不在名冊的指定車視為不可用，訂單退回一般排班
+
+### 司機查詢
+- `roster_svc.driver_for_date(db, date)` → `{vehicle_id: {driver_id, name, phone}}`
+- 看板、報表、口卡、建議車輛端點皆統一呼叫此函式
+- `driver_resolve.resolve(db, driver_name, date)` → 查 `ShiftException WHERE driver_id=司機 AND ex_date=日期`
 
 ## 原則 7:最長乘車時間上限(防止共乘把人載太久)
 - **問題**:原模型只限上車時間窗、不限下車;VROOM 為省車會把長程下車拖到收車前

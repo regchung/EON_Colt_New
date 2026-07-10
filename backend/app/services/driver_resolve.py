@@ -1,12 +1,7 @@
-"""司機↔車輛對應解析(地基)。
+"""司機↔車輛對應解析。
 
-目的:給定司機姓名(與日期),回傳其當日駕駛的車輛。供休假/調班、固定行程、口卡等
-以「司機」為操作對象的功能共用,取代各處不可靠的「首見」對應。
-
-優先序(主題1A 先做 a/c;1B 補當日指派):
-  a) 當日駕駛-車輛指派(driver_vehicle_assignment)— 1B 加入
-  b) Driver.vehicle_id 預設車
-  c) 查無 → None
+給定司機姓名與服務日期，從當日出勤名冊(ShiftException.driver_id)查出該司機駕駛的車輛。
+無日期時查無法回傳車輛(不再有靜態預設車對應)。
 """
 from __future__ import annotations
 
@@ -16,55 +11,63 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.driver import Driver
-from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.fixed_route import FixedRoute
+from app.models.shift import ShiftException
 from app.models.vehicle import Vehicle
 
 
 def resolve(db: Session, driver_name: str, service_date: date | None = None) -> Vehicle | None:
-    """回傳該司機(當日)駕駛的車輛;查無回 None。"""
-    if not driver_name:
+    """回傳該司機在 service_date 當日駕駛的車輛；查無或無日期回 None。"""
+    if not driver_name or service_date is None:
         return None
     d = db.scalar(select(Driver).where(Driver.name == driver_name.strip()))
     if d is None:
         return None
-    # 1) 當日輪車指派優先
-    if service_date is not None:
-        a = db.scalar(select(DriverVehicleAssignment).where(
-            DriverVehicleAssignment.service_date == service_date,
-            DriverVehicleAssignment.driver_id == d.id))
-        if a and a.vehicle_id:
-            return db.get(Vehicle, a.vehicle_id)
-    # 2) 預設車
-    if d.vehicle_id:
-        return db.get(Vehicle, d.vehicle_id)
+    exc = db.scalar(select(ShiftException).where(
+        ShiftException.driver_id == d.id,
+        ShiftException.ex_date == service_date,
+        ShiftException.available.is_(True),
+    ))
+    if exc:
+        return db.get(Vehicle, exc.vehicle_id)
     return None
 
 
-def status_list(db: Session, fleet: str | None = None, missing_only: bool = False) -> list[dict]:
-    """所有司機 + 對應車輛 + 是否無車(供「司機車輛」管理頁)。"""
+def status_list(db: Session, fleet: str | None = None,
+                service_date: date | None = None) -> list[dict]:
+    """所有司機清單；若提供 service_date，附帶當日出勤車輛資訊。"""
     q = select(Driver).order_by(Driver.home_fleet, Driver.name)
     if fleet:
         q = q.where(Driver.home_fleet == fleet)
     drivers = list(db.scalars(q).all())
+
+    # 當日出勤：driver_id → vehicle_id
+    dvmap: dict[int, int] = {}
+    if service_date:
+        for exc in db.scalars(select(ShiftException).where(
+            ShiftException.ex_date == service_date,
+            ShiftException.available.is_(True),
+            ShiftException.driver_id.is_not(None),
+        )).all():
+            dvmap[exc.driver_id] = exc.vehicle_id
+
     vmap = {v.id: v for v in db.scalars(select(Vehicle)).all()}
     out = []
     for d in drivers:
-        v = vmap.get(d.vehicle_id) if d.vehicle_id else None
-        if missing_only and v is not None:
-            continue
+        vid = dvmap.get(d.id)
+        v = vmap.get(vid) if vid else None
         out.append({
             "driver_id": d.id, "name": d.name, "phone": d.phone,
             "home_fleet": d.home_fleet, "active": d.active,
-            "vehicle_id": d.vehicle_id, "plate": v.plate if v else None,
+            "vehicle_id": vid, "plate": v.plate if v else None,
             "vehicle_type": v.type if v else None, "seats": v.seats if v else None,
             "has_vehicle": v is not None,
         })
     return out
 
 
-def fixed_route_unresolved(db: Session) -> list[str]:
-    """啟用中的固定行程裡,無法對應到車輛的司機姓名(未建檔或無車)。"""
+def fixed_route_unresolved(db: Session, service_date: date | None = None) -> list[str]:
+    """啟用中的固定行程裡，指定日期查無出勤車輛的司機姓名。"""
     names = {r.driver_name for r in db.scalars(
         select(FixedRoute).where(FixedRoute.active.is_(True))).all() if r.driver_name}
-    return sorted(n for n in names if resolve(db, n) is None)
+    return sorted(n for n in names if resolve(db, n, service_date) is None)

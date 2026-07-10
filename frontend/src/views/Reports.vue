@@ -9,7 +9,7 @@ const dateFrom = ref(ago13)
 const dateTo = ref(today)
 const data = ref(null)
 const loading = ref(false)
-const source = ref('auto')   // auto=自動派遣(客戶回饋用,預設)/ human=人工實際
+const source = ref('human')  // human=讀 Order 指派結果(預設) / auto=AutoDispatchStop落地表
 
 const STATUS_LABEL = { imported: '待排', scheduled: '已排', ongoing: '進行中', done: '完成', canceled: '取消' }
 

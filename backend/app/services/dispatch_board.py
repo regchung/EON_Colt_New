@@ -71,15 +71,11 @@ def board(db: Session, service_date: date, source: str = "human") -> dict:
     veh_ids = set(duty) | {o.assigned_vehicle_id for o in assigned}
     vmap = {v.id: v for v in db.scalars(select(Vehicle).where(Vehicle.id.in_(veh_ids))).all()} if veh_ids else {}
 
-    # 車輛 → 駕駛(當日輪車指派優先,否則司機預設車)
-    drv_by_veh: dict[int, str] = {}
-    for d in db.scalars(select(Driver).where(Driver.vehicle_id.is_not(None))).all():
-        drv_by_veh.setdefault(d.vehicle_id, d.name)
-    for a in db.scalars(select(DriverVehicleAssignment).where(
-            DriverVehicleAssignment.service_date == service_date)).all():
-        dn = db.get(Driver, a.driver_id)
-        if dn:
-            drv_by_veh[a.vehicle_id] = dn.name
+    # 車輛 → 駕駛(當日出勤名冊)
+    drv_by_veh: dict[int, str] = {
+        vid: info["name"] for vid, info in roster_svc.driver_for_date(db, service_date).items()
+        if info.get("name")
+    }
 
     by_veh: dict[int, list[Order]] = {}
     for o in assigned:
@@ -180,14 +176,10 @@ def _board_auto(db: Session, service_date: date) -> dict:
     omap = {o.id: o for o in db.scalars(select(Order).where(Order.id.in_(oids))).all()} if oids else {}
     vmap = {v.id: v for v in db.scalars(select(Vehicle)).all()}
 
-    drv_by_veh: dict[int, str] = {}
-    for d in db.scalars(select(Driver).where(Driver.vehicle_id.is_not(None))).all():
-        drv_by_veh.setdefault(d.vehicle_id, d.name)
-    for a in db.scalars(select(DriverVehicleAssignment).where(
-            DriverVehicleAssignment.service_date == service_date)).all():
-        dn = db.get(Driver, a.driver_id)
-        if dn:
-            drv_by_veh[a.vehicle_id] = dn.name
+    drv_by_veh: dict[int, str] = {
+        vid: info["name"] for vid, info in roster_svc.driver_for_date(db, service_date).items()
+        if info.get("name")
+    }
 
     # 共乘對:同一車上,若乙的上車 ETA ≤ 甲的下車 ETA → 共乘同行,重疊屬正常(VROOM 已驗可行)
     pool_pairs: set[tuple[int, int]] = set()

@@ -12,6 +12,7 @@ from sqlalchemy import distinct, select
 from sqlalchemy.orm import Session
 
 from app.models.dispatch_history import DispatchHistory
+from app.models.driver import Driver
 from app.models.shift import ShiftException, ShiftPattern
 from app.models.vehicle import Vehicle
 from app.services import forecast as forecast_svc
@@ -49,6 +50,29 @@ def available_vehicles(db: Session, service_date: date) -> dict[int, tuple[int |
             out[vid] = (_secs(p.shift_start), _secs(p.shift_end))
         # 3) 無資料 → 保守視為不可用(不納入)
     return out
+
+
+def driver_for_date(db: Session, service_date: date) -> dict[int, dict]:
+    """回傳 {vehicle_id: {driver_id, name, phone}} 當日出勤名冊的司機對照。
+    僅包含 ShiftException.available=True 且有 driver_id 的記錄。"""
+    rows = db.execute(
+        select(ShiftException.vehicle_id, ShiftException.driver_id)
+        .where(ShiftException.ex_date == service_date,
+               ShiftException.available.is_(True),
+               ShiftException.driver_id.is_not(None))
+    ).all()
+    if not rows:
+        return {}
+    dids = {r.driver_id for r in rows}
+    dmap = {d.id: d for d in db.scalars(select(Driver).where(Driver.id.in_(dids))).all()}
+    return {
+        r.vehicle_id: {
+            "driver_id": r.driver_id,
+            "name": dmap[r.driver_id].name if r.driver_id in dmap else None,
+            "phone": dmap[r.driver_id].phone if r.driver_id in dmap else None,
+        }
+        for r in rows if r.driver_id in dmap
+    }
 
 
 def has_any_roster(db: Session) -> bool:

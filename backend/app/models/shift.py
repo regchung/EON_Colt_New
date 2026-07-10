@@ -24,7 +24,8 @@ class ShiftPattern(Base):
 
 
 class ShiftException(Base):
-    """單日例外:available=False 表請假/維修(當日不出勤);True 表臨時加班。"""
+    """單日例外:available=False 表請假/維修(當日不出勤);True 表臨時加班。
+    driver_id 記錄當日駕駛該車的司機(出勤名冊匯入時填入)。"""
     __tablename__ = "shift_exception"
     __table_args__ = (UniqueConstraint("vehicle_id", "ex_date", name="uq_shift_exc_veh_date"),)
 
@@ -35,3 +36,6 @@ class ShiftException(Base):
     shift_start: Mapped[time | None] = mapped_column(Time)
     shift_end: Mapped[time | None] = mapped_column(Time)
     reason: Mapped[str | None] = mapped_column(String(50))
+    driver_id: Mapped[int | None] = mapped_column(
+        ForeignKey("drivers.id", ondelete="SET NULL"), index=True
+    )

@@ -18,10 +18,10 @@ from openpyxl.utils import get_column_letter
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.models.driver import Driver
 from app.models.order import Order
 from app.models.unassigned_record import UnassignedRecord
 from app.models.vehicle import Vehicle
+from app.services import roster as roster_svc
 
 
 def _unassigned_reason(o, ur: dict, has_welfare: bool) -> str:
@@ -82,10 +82,11 @@ def _load(db: Session, service_date: date, fleet: str | None):
         q = q.where(Order.fleet == fleet)
     orders = list(db.scalars(q).all())
     veh = {v.id: v for v in db.scalars(select(Vehicle)).all()}
-    drv: dict[int, str] = {}
-    for d in db.scalars(select(Driver)).all():
-        if d.vehicle_id and d.vehicle_id not in drv:
-            drv[d.vehicle_id] = d.name
+    drv: dict[int, str] = {
+        vid: info["name"]
+        for vid, info in roster_svc.driver_for_date(db, service_date).items()
+        if info.get("name")
+    }
     return orders, veh, drv
 
 
