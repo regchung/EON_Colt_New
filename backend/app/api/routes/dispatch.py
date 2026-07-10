@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -52,14 +52,13 @@ def run(service_date: date, ai: bool = False, db: Session = Depends(get_db)):
 
 @router.get("/export")
 def export_dispatch(service_date: date, fleet: str | None = None, layout: str = "single",
-                    source: str = "human", db: Session = Depends(get_db)):
-    """匯出某日派遣表(Excel)。fleet 空=全車行;layout=single|per_vehicle;
-    source=human(讀 Order.assigned_vehicle_id,預設)|auto(AutoDispatchStop 落地表)。"""
+                    db: Session = Depends(get_db)):
+    """匯出某日派遣表(Excel)。fleet 空=全車行;layout=single|per_vehicle。
+    固定讀取 Order.assigned_vehicle_id（即時排班結果）。"""
     data = dispatch_export.build_workbook(
-        db, service_date, (fleet or None), per_vehicle=(layout == "per_vehicle"), source=source)
+        db, service_date, (fleet or None), per_vehicle=(layout == "per_vehicle"), source="human")
     suffix = "每車表" if layout == "per_vehicle" else "總表"
-    stag = "自動" if source == "auto" else "人工"
-    name = f"EON_COLT_{stag}派遣_{service_date.isoformat()}_{fleet or '全車行'}_{suffix}.xlsx"
+    name = f"EON_COLT_派遣_{service_date.isoformat()}_{fleet or '全車行'}_{suffix}.xlsx"
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -412,6 +411,50 @@ def comparison_persist_day(service_date: date, db: Session = Depends(get_db)):
     寫入彙總 dispatch_comparison + 未派 unassigned_record + **每車每停靠點 auto_dispatch_stop**。
     只清/重寫該日。回傳寫入統計。"""
     return comparison.persist_day(db, service_date)
+
+
+# ── 非同步批次對比（分析區專用）──
+# 簡單的 in-process 狀態追蹤；重啟後清空，僅供當次 session 查詢。
+_batch_status: dict = {"running": False, "last_date": None, "last_result": None, "error": None}
+
+
+def _run_batch_bg(service_date: date):
+    """背景執行批次對比，結束後更新狀態。"""
+    from app.db.session import SessionLocal as _SL
+    _batch_status["running"] = True
+    _batch_status["error"] = None
+    try:
+        _db = _SL()
+        result = comparison.persist_day(_db, service_date)
+        _db.close()
+        _batch_status["last_result"] = result
+        _batch_status["last_date"] = service_date.isoformat()
+    except Exception as e:
+        _batch_status["error"] = str(e)
+    finally:
+        _batch_status["running"] = False
+
+
+@router.post("/comparison/run-async")
+def comparison_run_async(service_date: date, background_tasks: BackgroundTasks):
+    """非同步執行單日批次對比（不阻塞 API）。
+    立即回傳 202；用 GET /comparison/batch-status 查詢進度。"""
+    if _batch_status["running"]:
+        return {"accepted": False, "reason": "批次對比正在執行中，請稍後再試。"}
+    background_tasks.add_task(_run_batch_bg, service_date)
+    return {"accepted": True, "service_date": service_date.isoformat(),
+            "message": "批次對比已在背景啟動，請稍後查詢 /comparison/batch-status"}
+
+
+@router.get("/comparison/batch-status")
+def comparison_batch_status():
+    """查詢非同步批次對比的執行狀態。"""
+    return {
+        "running": _batch_status["running"],
+        "last_date": _batch_status["last_date"],
+        "last_result": _batch_status["last_result"],
+        "error": _batch_status["error"],
+    }
 
 
 @router.get("/auto-stops")
