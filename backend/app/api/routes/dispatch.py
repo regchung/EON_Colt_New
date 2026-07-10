@@ -944,8 +944,11 @@ def _plan_from_assigned(db: Session, service_date: date, fleet: str | None, plat
         plate_str = v.plate if v else f"#{o.assigned_vehicle_id}"
         fl = o.fleet or (v.home_fleet if v else None) or "(未標車行)"
         name, phone = drv.get(o.assigned_vehicle_id, (None, None))
+        is_welfare = v.type == "welfare" if v else False
         grouped.setdefault(fl, {}).setdefault(
-            plate_str, {"plate": plate_str, "driver": name, "driver_phone": phone, "tasks": []}
+            plate_str, {"plate": plate_str, "driver": name, "driver_phone": phone,
+                        "vehicle_type": v.type if v else "normal",
+                        "welfare": is_welfare, "tasks": []}
         )["tasks"].append(_plan_order_task(o))
     return _plan_cards_response(grouped, service_date, fleet, plate, len(orders), "plan")
 

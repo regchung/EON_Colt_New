@@ -91,11 +91,16 @@ function printCards() { window.print() }
       </h6>
       <div class="row g-2">
         <div v-for="v in f.vehicles" :key="v.plate" class="col-12 col-lg-6">
-          <div class="card shadow-sm h-100 kou-card">
-            <div class="card-header py-2 d-flex justify-content-between align-items-center bg-light">
-              <span><span class="fw-bold fs-6">{{ v.plate }}</span>
+          <div class="card shadow-sm h-100 kou-card"
+               :class="v.welfare ? 'border-warning' : 'border-secondary border-opacity-25'">
+            <div class="card-header py-2 d-flex justify-content-between align-items-center"
+                 :class="v.welfare ? 'bg-warning bg-opacity-25' : 'bg-light'">
+              <span>
+                <span class="fw-bold fs-6">{{ v.plate }}</span>
+                <span v-if="v.welfare" class="badge bg-warning text-dark ms-1" title="福祉車">福祉</span>
                 <span class="text-muted ms-2">{{ v.driver || '—' }}</span>
-                <span v-if="v.driver_phone" class="text-muted small ms-1">{{ v.driver_phone }}</span></span>
+                <span v-if="v.driver_phone" class="text-muted small ms-1">{{ v.driver_phone }}</span>
+              </span>
               <span class="small"><span class="badge bg-secondary">{{ v.task_count }} 趟</span>
                 <span class="text-muted ms-1">{{ v.first }}–{{ v.last }}</span></span>
             </div>
@@ -103,7 +108,7 @@ function printCards() { window.print() }
               <table class="table table-sm mb-0 align-middle small">
                 <thead class="table-light"><tr>
                   <th style="width:2rem">#</th><th style="width:3.2rem">時間</th><th>乘客 / 路線</th>
-                  <th style="width:2rem" class="text-center">人</th><th style="width:3rem">標記</th>
+                  <th style="width:2rem" class="text-center">人</th><th style="width:4.5rem">需求</th>
                 </tr></thead>
                 <tbody>
                   <tr v-for="(t, i) in v.tasks" :key="i">
@@ -118,8 +123,9 @@ function printCards() { window.print() }
                     </td>
                     <td class="text-center">{{ t.pax }}</td>
                     <td>
-                      <span v-if="t.welfare" class="badge bg-warning text-dark" title="福祉車">福</span>
-                      <span v-if="t.wheelchair" class="badge bg-info text-dark" title="輪椅">♿{{ t.wheelchair }}</span>
+                      <span v-if="t.welfare" class="badge bg-warning text-dark me-1" title="需福祉車">福祉</span>
+                      <span v-else class="badge bg-light text-secondary border me-1" title="一般車即可">一般</span>
+                      <span v-if="t.wheelchair" class="badge bg-info text-dark" title="需輪椅空間">♿</span>
                     </td>
                   </tr>
                 </tbody>
