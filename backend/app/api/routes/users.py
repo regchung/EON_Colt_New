@@ -37,6 +37,10 @@ class PasswordUpdate(BaseModel):
     password: str
 
 
+class RoleUpdate(BaseModel):
+    role: RoleType
+
+
 @router.get("", response_model=list[UserOut])
 def list_users(db: Session = Depends(get_db)):
     return list(db.scalars(select(User).order_by(User.id)).all())
@@ -68,6 +72,17 @@ def reset_password(id: int, payload: PasswordUpdate, db: Session = Depends(get_d
     if not user:
         raise HTTPException(status_code=404, detail="使用者不存在")
     user.hashed_password = hash_password(payload.password)
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+@router.put("/{id}/role", response_model=UserOut)
+def update_role(id: int, payload: RoleUpdate, db: Session = Depends(get_db)):
+    user = db.get(User, id)
+    if not user:
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    user.role = payload.role
     db.commit()
     db.refresh(user)
     return user
