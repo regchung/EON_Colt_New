@@ -321,14 +321,15 @@ def _is_welfare(o: Order) -> bool:
 
 
 def _vehicles_with_driver(db: Session, service_date: date) -> set[int]:
-    ids = {vid for (vid,) in db.execute(
-        select(Driver.vehicle_id)
-        .where(Driver.vehicle_id.is_not(None), Driver.suspended.is_(False))).all()}
-    ids |= {vid for (vid, susp) in db.execute(
-        select(DriverVehicleAssignment.vehicle_id, Driver.suspended)
-        .join(Driver, Driver.id == DriverVehicleAssignment.driver_id)
-        .where(DriverVehicleAssignment.service_date == service_date)).all() if not susp}
-    return ids
+    """回傳當日有指定司機的車輛 ID 集合（由 shift_exception.driver_id 判斷）。"""
+    from app.models.shift import ShiftException
+    return {vid for (vid,) in db.execute(
+        select(ShiftException.vehicle_id)
+        .where(
+            ShiftException.ex_date == service_date,
+            ShiftException.driver_id.is_not(None),
+        )
+    ).all()}
 
 
 
