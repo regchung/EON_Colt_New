@@ -1,8 +1,9 @@
 <script setup>
-import { onMounted, ref, reactive } from 'vue'
+import { onMounted, ref, reactive, computed, watch } from 'vue'
 import { useDriversStore } from '../stores/drivers'
 import { useVehiclesStore } from '../stores/vehicles'
 import client from '../api/client'
+import Pagination from '../components/Pagination.vue'
 
 const store = useDriversStore()
 const vehicles = useVehiclesStore()
@@ -14,6 +15,11 @@ const blank = () => ({
   vehicle_id: null,
   active: true,
 })
+
+const PAGE_SIZE_D = 30
+const dPage = ref(1)
+const pagedDrivers = computed(() => store.items.slice((dPage.value - 1) * PAGE_SIZE_D, dPage.value * PAGE_SIZE_D))
+watch(() => store.items, () => { dPage.value = 1 })
 
 const showForm = ref(false)
 const editingId = ref(null)
@@ -106,7 +112,7 @@ async function toggleSuspend(d) {
         <tr><th>#</th><th>姓名</th><th>電話</th><th>駕照</th><th>指派車輛</th><th>狀態</th><th></th></tr>
       </thead>
       <tbody>
-        <tr v-for="d in store.items" :key="d.id">
+        <tr v-for="d in pagedDrivers" :key="d.id">
           <td>{{ d.id }}</td>
           <td>{{ d.name }}</td>
           <td>{{ d.phone || '-' }}</td>
@@ -130,5 +136,6 @@ async function toggleSuspend(d) {
         </tr>
       </tbody>
     </table>
+    <Pagination :total="store.items.length" v-model:page="dPage" :page-size="PAGE_SIZE_D" />
   </div>
 </template>

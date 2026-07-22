@@ -18,7 +18,6 @@ async function onSuggestAssigned() {
   await selectDate(sel.value)
 }
 
-const fleets = ['', '台北', '新北', '樂格適', '發隆興']
 const fleet = ref('')
 const dates = ref([])
 const sel = ref('')          // 選定日期
@@ -108,10 +107,7 @@ onMounted(async () => { await loadCats(); await loadDates() })
   </p>
 
   <div class="d-flex flex-wrap align-items-center gap-2 mb-3">
-    <label class="small mb-0">車行</label>
-    <select v-model="fleet" class="form-select form-select-sm" style="width:140px" @change="onFleetChange">
-      <option v-for="f in fleets" :key="f" :value="f">{{ f || '全部車行' }}</option>
-    </select>
+    <!-- 車行篩選隱藏（單一車行大豐） -->
     <span v-if="toast" class="badge bg-success ms-2">{{ toast }}</span>
   </div>
   <div v-if="error" class="alert alert-danger py-2">{{ error }}</div>

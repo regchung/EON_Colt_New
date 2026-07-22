@@ -12,7 +12,7 @@ const toast = ref('')
 // 指派車欄(每列暫存)
 const edit = ref({})   // driver_id -> {plate, seats, type}
 // 新增司機(補固定行程缺檔)
-const nf = ref({ name: '', home_fleet: '', plate: '', seats: 4, type: 'normal' })
+const nf = ref({ name: '', home_fleet: '大豐', plate: '', seats: 4, type: 'normal' })
 
 // 當日輪車指派(主題1B)
 const dailyDate = ref(new Date().toISOString().slice(0, 10))
@@ -106,8 +106,7 @@ async function delDaily(id) { await client.delete(`/driver-vehicle/daily/${id}`)
     <div class="row g-2 align-items-end">
       <div class="col-6 col-md-2"><label class="form-label small mb-0">姓名</label>
         <input v-model="nf.name" class="form-control form-control-sm" /></div>
-      <div class="col-6 col-md-2"><label class="form-label small mb-0">車行</label>
-        <input v-model="nf.home_fleet" class="form-control form-control-sm" placeholder="台北" /></div>
+      <!-- 車行固定大豐，不顯示輸入欄 -->
       <div class="col-6 col-md-2"><label class="form-label small mb-0">車牌(選填)</label>
         <input v-model="nf.plate" class="form-control form-control-sm" placeholder="RXX-0000" /></div>
       <div class="col-4 col-md-1"><label class="form-label small mb-0">座位</label>
@@ -154,7 +153,7 @@ async function delDaily(id) { await client.delete(`/driver-vehicle/daily/${id}`)
   <!-- 過濾 -->
   <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
     <input v-model="search" class="form-control form-control-sm" style="width:160px" placeholder="搜尋姓名" />
-    <input v-model="fleet" class="form-control form-control-sm" style="width:120px" placeholder="車行" @change="load" />
+    <!-- 車行篩選隱藏（單一車行大豐） -->
     <div class="form-check"><input v-model="missingOnly" type="checkbox" class="form-check-input" id="mo" @change="load" />
       <label class="form-check-label small" for="mo">只看無車</label></div>
     <span class="ms-auto small text-muted">司機 {{ data.count }} 人 · 無車 {{ data.missing }} 人</span>

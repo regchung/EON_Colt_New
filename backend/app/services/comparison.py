@@ -633,6 +633,157 @@ def persist_day(db: Session, service_date: date, window_min: int | None = None) 
     return res
 
 
+def persist_day_from_run(db: Session, service_date: date) -> dict:
+    """
+    從 run_dispatch 已寫入的 route_stop + orders 建立 auto_dispatch_stop，
+    不重跑 VROOM，確保看板顯示的路線與實際派遣完全一致。
+
+    適合「先跑一鍵排班(C-A)再落地(C-B)」的標準流程：
+      run_dispatch → route_stop / orders.status=scheduled
+      persist_day_from_run → auto_dispatch_stop / dispatch_comparison / unassigned_record
+    """
+    from app.models.auto_dispatch_stop import AutoDispatchStop
+    from app.models.route import RouteStop
+
+    run_at = datetime.now(TW)
+    window_min = settings_svc.get(db, "pickup_window_min", 30)
+
+    # ── 清除舊資料（只當日）──────────────────────────────
+    for model in (DispatchComparison, UnassignedRecord, AutoDispatchStop):
+        db.query(model).filter(model.service_date == service_date).delete()
+
+    # ── 讀 route_stop ─────────────────────────────────────
+    stops = list(db.scalars(
+        select(RouteStop)
+        .where(RouteStop.service_date == service_date)
+        .where(RouteStop.kind.in_(("pickup", "delivery")))
+        .order_by(RouteStop.vehicle_id, RouteStop.seq)
+    ).all())
+
+    # ── 讀 orders（已派 + 未派）──────────────────────────
+    all_orders = list(db.scalars(
+        select(Order)
+        .where(Order.service_date == service_date)
+        .where(Order.pickup_lng.is_not(None))
+    ).all())
+
+    assigned_orders = [o for o in all_orders if o.assigned_vehicle_id is not None
+                       and o.status == "scheduled"]
+    unassigned_orders = [o for o in all_orders if o.assigned_vehicle_id is None
+                         or o.status == "imported"]
+
+    # ── 讀車輛（計算 occupancy 用）────────────────────────
+    veh_ids = {s.vehicle_id for s in stops}
+    veh_map = {v.id: v for v in db.scalars(
+        select(Vehicle).where(Vehicle.id.in_(veh_ids))
+    ).all()} if veh_ids else {}
+
+    # ── 計算每趟在車人數（occupancy）────────────────────
+    order_map = {o.id: o for o in all_orders}
+    # 依車輛分組，依序追蹤乘客數
+    by_veh: dict[int, list[RouteStop]] = {}
+    for s in stops:
+        by_veh.setdefault(s.vehicle_id, []).append(s)
+
+    occ_map: dict[int, int] = {}   # stop.id → occupancy（此站後在車人數）
+    for vid, vstops in by_veh.items():
+        cur = 0
+        for s in vstops:
+            o = order_map.get(s.order_id) if s.order_id else None
+            pax = max(1, (o.pax or 1)) if o else 1
+            if s.kind == "pickup":
+                cur += pax
+            elif s.kind == "delivery":
+                cur -= pax
+            occ_map[id(s)] = max(0, cur)
+
+    # ── 寫 auto_dispatch_stop ─────────────────────────────
+    fleet_default = "大豐"   # 單一車行
+    stop_count = 0
+    for vid, vstops in by_veh.items():
+        v = veh_map.get(vid)
+        veh_fleet = (v.home_fleet if v else None) or fleet_default
+        for s in vstops:
+            o = order_map.get(s.order_id) if s.order_id else None
+            order_fleet = (o.fleet if o else None) or fleet_default
+            is_support = veh_fleet != order_fleet
+            db.add(AutoDispatchStop(
+                service_date=service_date,
+                fleet=order_fleet,
+                vehicle_id=vid,
+                seq=s.seq,
+                kind=s.kind,
+                order_id=s.order_id,
+                eta=s.eta,
+                occupancy=occ_map.get(id(s), 0),
+                is_support=is_support,
+                window_min=window_min,
+                run_at=run_at,
+            ))
+            stop_count += 1
+
+    # ── 寫 dispatch_comparison ────────────────────────────
+    vroom_vehs = len({s.vehicle_id for s in stops})
+    n_orders = len(assigned_orders)
+    vroom_unassigned = len(unassigned_orders)
+
+    # 人工歷史用車數（從 dispatch_history 取，若無則用自動結果）
+    human_vehs_row = db.execute(
+        select(func.count(func.distinct(DispatchHistory.plate)))
+        .where(DispatchHistory.service_date == service_date)
+    ).scalar() or 0
+    human_vehicles = human_vehs_row if human_vehs_row > 0 else vroom_vehs
+
+    if n_orders > 0 or vroom_unassigned > 0:
+        db.add(DispatchComparison(
+            service_date=service_date,
+            fleet=fleet_default,
+            window_min=window_min,
+            n_orders=n_orders,
+            human_vehicles=human_vehicles,
+            vroom_vehicles=vroom_vehs,
+            saved_vehicles=human_vehicles - vroom_vehs,
+            vroom_unassigned=vroom_unassigned,
+            human_minutes=None,
+            vroom_drive_sec=None,
+        ))
+
+    # ── 寫 unassigned_record ──────────────────────────────
+    for o in unassigned_orders:
+        # 判斷原因
+        if o.pickup_lng is None or o.dropoff_lng is None:
+            code = "no_coords"
+        elif o.pickup_time:
+            h = o.pickup_time.astimezone(TW).hour
+            if h < 6 or h >= 18:
+                code = "out_of_hours"
+            else:
+                code = "infeasible"
+        else:
+            code = "infeasible"
+        db.add(UnassignedRecord(
+            service_date=service_date,
+            fleet=(o.fleet or fleet_default),
+            order_id=o.id,
+            source_order_no=o.source_order_no,
+            reason_code=code,
+            reason_detail=None,
+        ))
+
+    db.commit()
+
+    return {
+        "service_date": service_date.isoformat(),
+        "source": "run_dispatch",
+        "stops": stop_count,
+        "vroom_vehicles": vroom_vehs,
+        "human_vehicles": human_vehicles,
+        "saved_vehicles": human_vehicles - vroom_vehs,
+        "assigned": n_orders,
+        "unassigned": vroom_unassigned,
+    }
+
+
 def compare_day_by_vehicle(db: Session, fleet: str, service_date: date,
                            window_min: int | None = None) -> dict | None:
     """逐車對比:同一天、同一組實體車輛,左=人工實際派遣、右=VROOM 自動派遣。

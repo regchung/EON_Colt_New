@@ -8,7 +8,7 @@ import { useAuthStore } from '../stores/auth'
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
-const title = computed(() => route.meta.title || 'EON COLT')
+const title = computed(() => route.meta.title || 'DrFish')
 
 // 路由切換後,關閉手機版側欄抽屜(若開著)
 watch(
@@ -30,19 +30,16 @@ const navGroups = [
   { group: '總覽', items: [
     { to: '/', label: '儀表板', icon: '📊', roles: null },
     { to: '/driver-route', label: '我的路單', icon: '🗒️', roles: ['driver'] },
-    { to: '/map', label: '路線地圖', icon: '🗺️', roles: null },
   ] },
   { group: '派遣作業', items: [
     { to: '/dispatch-board', label: '派遣看板', icon: '🧲', roles: dsp },
     { to: '/daily-tasks', label: '車輛任務口卡', icon: '🪪', roles: dsp },
-    { to: '/fixed-routes', label: '固定行程', icon: '📌', roles: dsp },
-    { to: '/pool-suggest', label: '共乘建議', icon: '🤝', roles: dsp },
     { to: '/unassigned', label: '未派分析', icon: '⚠️', roles: dsp },
   ] },
   { group: '分析報表', items: [
     { to: '/reports', label: '報表', icon: '📈', roles: dsp },
-    { to: '/comparison', label: '人工 vs 自動', icon: '🆚', roles: dsp },
-    { to: '/vehicle-comparison', label: '逐車對比', icon: '🚐', roles: dsp },
+    // { to: '/comparison', label: '人工 vs 自動', icon: '🆚', roles: dsp },
+    // { to: '/vehicle-comparison', label: '逐車對比', icon: '🚐', roles: dsp },
   ] },
   { group: '基礎資料', items: [
     { to: '/orders', label: '訂單管理', icon: '📋', roles: dsp },
@@ -54,9 +51,8 @@ const navGroups = [
     { to: '/addresses', label: '地址簿', icon: '📍', roles: dsp },
   ] },
   { group: '系統', items: [
-    { to: '/assistant', label: 'AI 助理', icon: '💬', roles: dsp },
     { to: '/users', label: '使用者管理', icon: '👥', roles: ['admin'] },
-    { to: '/settings', label: '參數設定', icon: '⚙️', roles: ['admin'] },
+    // { to: '/settings', label: '參數設定', icon: '⚙️', roles: ['admin'] },
   ] },
 ]
 
@@ -85,7 +81,7 @@ const nav = computed(() =>
         >
           <span class="navbar-toggler-icon"></span>
         </button>
-        <span class="navbar-brand mb-0 h1">🚖 EON COLT</span>
+        <span class="navbar-brand mb-0 h1">🚖 DrFish</span>
         <span class="navbar-text text-white-50 d-none d-sm-inline ms-2">{{ title }}</span>
         <div class="ms-auto d-flex align-items-center gap-2">
           <span class="navbar-text text-white small d-none d-sm-inline">👤 {{ auth.username }}</span>

@@ -22,7 +22,7 @@ revision:
 	docker compose exec backend alembic revision --autogenerate -m "$(m)"
 
 psql:
-	docker compose exec db psql -U eon_colt -d eon_colt
+	docker compose exec db psql -U dr_fish -d dr_fish
 
 osrm-prepare:
 	./osrm/prepare.sh

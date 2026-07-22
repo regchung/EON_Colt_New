@@ -1,9 +1,10 @@
 <script setup>
-import { onMounted, ref, reactive, computed } from 'vue'
+import { onMounted, ref, reactive, computed, watch } from 'vue'
 import { useOrdersStore } from '../stores/orders'
 import { useVehiclesStore } from '../stores/vehicles'
 import client from '../api/client'
 import SuggestVehicle from '../components/SuggestVehicle.vue'
+import Pagination from '../components/Pagination.vue'
 
 const store = useOrdersStore()
 const vehiclesStore = useVehiclesStore()
@@ -18,160 +19,40 @@ function fmtEta(eta) {
   return eta ? eta.slice(11, 16) : ''
 }
 
-// --- 批次匯入 ---
-const fileInput = ref(null)
-const importing = ref(false)
-const importReport = ref(null)
-const importProgress = ref(null) // { phase, current, total, created, geo_done, geo_failed }
 
-function pickFile() {
-  importReport.value = null
-  importProgress.value = null
-  fileInput.value?.click()
+// --- 大豐班表 Excel 匯入 ---
+const daifongFileInput = ref(null)
+const daifongImporting = ref(false)
+const daifongReport = ref(null)
+
+function pickDaifongFile() {
+  daifongReport.value = null
+  daifongFileInput.value?.click()
 }
 
-async function downloadTemplate() {
-  const { data } = await client.get('/orders/import/template', { responseType: 'blob' })
-  const url = URL.createObjectURL(data)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'eon_colt_import_template.csv'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
-}
-
-async function onFileChosen(e) {
+async function onDaifongFileChosen(e) {
   const file = e.target.files?.[0]
   if (!file) return
-  importing.value = true
-  importReport.value = null
-  importProgress.value = { phase: 'import', current: 0, total: 0, created: 0, geo_done: 0, geo_failed: 0 }
-
+  const replace = confirm(`匯入大豐班表「${file.name}」?\n\n選「確定」= 取代同日期既有訂單\n選「取消」= 僅新增(不刪既有)`)
+  daifongImporting.value = true
+  daifongReport.value = null
   try {
     const fd = new FormData()
     fd.append('file', file)
-    const token = localStorage.getItem('token')
-    const resp = await fetch('/api/orders/import', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      body: fd,
-    })
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}))
-      importReport.value = { error: err.detail || `HTTP ${resp.status}` }
-      return
-    }
-
-    const reader = resp.body.getReader()
-    const decoder = new TextDecoder()
-    let buf = ''
-
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
-      buf += decoder.decode(value, { stream: true })
-      const lines = buf.split('\n')
-      buf = lines.pop() // 保留未完整的行
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue
-        try {
-          const ev = JSON.parse(line.slice(6))
-          if (ev.type === 'start') {
-            importProgress.value = { phase: 'import', current: 0, total: ev.total, created: 0, geo_done: 0, geo_failed: 0 }
-          } else if (ev.type === 'progress' && ev.phase === 'import') {
-            importProgress.value = { ...importProgress.value, phase: 'import', current: ev.current, total: ev.total, created: ev.created }
-          } else if (ev.type === 'geocode_start') {
-            importProgress.value = { ...importProgress.value, phase: 'geocode', current: 0, total: ev.total }
-          } else if (ev.type === 'progress' && ev.phase === 'geocode') {
-            importProgress.value = { ...importProgress.value, phase: 'geocode', current: ev.current, total: ev.total, geo_done: ev.done, geo_failed: ev.failed }
-          } else if (ev.type === 'done') {
-            importReport.value = ev
-            importProgress.value = null
-            await store.fetchAll()
-          } else if (ev.type === 'error') {
-            importReport.value = { error: ev.message }
-            importProgress.value = null
-          }
-        } catch { /* 忽略解析錯誤 */ }
-      }
-    }
-  } catch (err) {
-    importReport.value = { error: err.message || '匯入失敗' }
-    importProgress.value = null
-  } finally {
-    importing.value = false
-    e.target.value = ''
-  }
-}
-
-// --- AI 文件智慧匯入 ---
-const docFileInput = ref(null)
-const docImporting = ref(false)
-const docReport = ref(null)
-
-function pickDocFile() {
-  docReport.value = null
-  docFileInput.value?.click()
-}
-
-async function onDocFileChosen(e) {
-  const file = e.target.files?.[0]
-  if (!file) return
-  docImporting.value = true
-  docReport.value = null
-  try {
-    const fd = new FormData()
-    fd.append('file', file)
-    // 文件未標日期時,預設用篩選列的服務日期(若有)
-    const params = filters.service_date ? { service_date: filters.service_date } : {}
-    const { data } = await client.post('/orders/import-doc', fd, { params, timeout: 120000 })
-    docReport.value = data
-    await store.fetchAll()
-  } catch (err) {
-    docReport.value = { error: err?.response?.data?.detail || err.message || '匯入失敗' }
-  } finally {
-    docImporting.value = false
-    e.target.value = ''
-  }
-}
-
-// --- 班表(人工派遣結果)匯入 ---
-const schedFileInput = ref(null)
-const schedImporting = ref(false)
-const schedReport = ref(null)
-
-function pickSchedFile() {
-  schedReport.value = null
-  schedFileInput.value?.click()
-}
-
-async function onSchedFileChosen(e) {
-  const file = e.target.files?.[0]
-  if (!file) return
-  if (!confirm(`匯入班表「${file.name}」?\n\n這會以班表為人工派遣結果,並「取代」班表內各服務日期既有的訂單與派遣紀錄(假單自動略過)。`)) {
-    e.target.value = ''
-    return
-  }
-  schedImporting.value = true
-  schedReport.value = null
-  try {
-    const fd = new FormData()
-    fd.append('file', file)
-    const { data } = await client.post('/history/import-schedule', fd, {
-      params: { replace_date: true },
+    const { data } = await client.post('/orders/import-daifong', fd, {
+      params: { replace_date: replace },
       timeout: 300000,
     })
-    schedReport.value = data
+    daifongReport.value = data
     await store.fetchAll()
   } catch (err) {
-    schedReport.value = { error: err?.response?.data?.detail || err.message || '匯入失敗' }
+    daifongReport.value = { error: err?.response?.data?.detail || err.message || '匯入失敗' }
   } finally {
-    schedImporting.value = false
+    daifongImporting.value = false
     e.target.value = ''
   }
 }
+
 
 // --- 地理編碼 ---
 const geocoding = ref(false)
@@ -198,37 +79,33 @@ function hasCoords(o) {
 // --- 一鍵排班 ---
 const dispatching = ref(false)
 const dispatchReport = ref(null)
-const aiAnalyzing = ref(false)
 
 async function runDispatch() {
-  const sd = filters.service_date || new Date().toISOString().slice(0, 10)
+  if (!filters.service_date) {
+    alert('請先在上方篩選列選擇「服務日期」再執行排班')
+    return
+  }
+  const sd = filters.service_date
+  const confirmed = confirm(
+    `⚠️ 一鍵排班：${sd}\n\n` +
+    `執行前將清除該日所有派遣相關資料（指派車輛、路線停靠點、比較記錄），並重新自動排班。\n\n` +
+    `確定要繼續嗎？`
+  )
+  if (!confirmed) return
   dispatching.value = true
   dispatchReport.value = null
   try {
+    // ① 執行排班（寫入 orders + route_stop）
     const { data } = await client.post('/dispatch/run', null, { params: { service_date: sd } })
     dispatchReport.value = data
+    // ② 自動落地到 auto_dispatch_stop（source=run：從已派結果同步，不重跑 VROOM）
+    await client.post('/dispatch/comparison/persist-day', null,
+      { params: { service_date: sd, source: 'run' } }).catch(() => {})
     await store.fetchAll(filters.service_date ? { service_date: sd } : {})
   } catch (err) {
     dispatchReport.value = { error: err?.response?.data?.detail || err.message }
   } finally {
     dispatching.value = false
-  }
-}
-
-async function runAiAnalyze() {
-  const sd = filters.service_date || new Date().toISOString().slice(0, 10)
-  aiAnalyzing.value = true
-  try {
-    const { data } = await client.post('/dispatch/ai-analyze', null, { params: { service_date: sd } })
-    if (dispatchReport.value) {
-      dispatchReport.value.ai_summary = data.ai_summary
-    } else {
-      dispatchReport.value = { ai_summary: data.ai_summary, _ai_only: true }
-    }
-  } catch (err) {
-    alert(err?.response?.data?.detail || 'AI 分析失敗')
-  } finally {
-    aiAnalyzing.value = false
   }
 }
 
@@ -242,6 +119,15 @@ const STATUS = {
 
 const filters = reactive({ service_date: '', status: '', vehicle_type: '' })
 
+// 分頁
+const PAGE_SIZE = 50
+const currentPage = ref(1)
+const pagedOrders = computed(() => {
+  const start = (currentPage.value - 1) * PAGE_SIZE
+  return store.items.slice(start, start + PAGE_SIZE)
+})
+watch(() => store.items, () => { currentPage.value = 1 })
+
 const blank = () => ({
   service_date: new Date().toISOString().slice(0, 10),
   pickup_time: new Date().toISOString().slice(0, 16),
@@ -253,8 +139,12 @@ const blank = () => ({
   pax: 1,
   vehicle_type: 'normal',
   need_wheelchair: false,
-  allow_pool: true,
+  allow_pool: false,   // 原則不共乘
   note: '',
+  payment_type: '',
+  order_nature: '',
+  customer_region: '',
+  eligibility: '',
   status: 'imported',
 })
 
@@ -347,17 +237,9 @@ async function onVehAssigned() {
   <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
     <span class="text-muted">共 {{ store.items.length }} 筆</span>
     <div class="btn-group flex-wrap">
-      <button class="btn btn-outline-secondary" @click="downloadTemplate">下載範本</button>
-      <button class="btn btn-outline-success" :disabled="importing" @click="pickFile">
-        {{ importing ? '匯入中…' : '批次匯入' }}
-      </button>
-      <button class="btn btn-outline-primary" :disabled="docImporting" @click="pickDocFile"
-              title="上傳 PDF/Word/Excel/CSV,由 AI 抽取訂單(內容會送往 Claude)">
-        {{ docImporting ? 'AI 解析中…' : '🤖 AI 文件匯入' }}
-      </button>
-      <button class="btn btn-outline-dark" :disabled="schedImporting" @click="pickSchedFile"
-              title="上傳車隊『班表』(人工派遣結果),建訂單+人工派遣歷史供逐車對比;取代當日既有資料">
-        {{ schedImporting ? '班表匯入中…' : '📋 班表匯入' }}
+      <button class="btn btn-success" :disabled="daifongImporting" @click="pickDaifongFile"
+              title="匯入大豐派遣班表 Excel(民國日期格式)">
+        {{ daifongImporting ? '大豐匯入中…' : '📥 大豐匯入' }}
       </button>
       <button class="btn btn-outline-info" :disabled="geocoding" @click="runGeocode">
         {{ geocoding ? '編碼中…' : '地理編碼待處理' }}
@@ -368,126 +250,38 @@ async function onVehAssigned() {
       <button class="btn btn-primary" @click="openCreate">+ 新增訂單</button>
     </div>
     <input
-      ref="fileInput"
-      type="file"
-      accept=".xlsx,.csv"
-      class="d-none"
-      @change="onFileChosen"
-    />
-    <input
-      ref="docFileInput"
-      type="file"
-      accept=".pdf,.docx,.xlsx,.xlsm,.xls,.csv,.txt,.md"
-      class="d-none"
-      @change="onDocFileChosen"
-    />
-    <input
-      ref="schedFileInput"
+      ref="daifongFileInput"
       type="file"
       accept=".xlsx,.xls"
       class="d-none"
-      @change="onSchedFileChosen"
+      @change="onDaifongFileChosen"
     />
   </div>
 
-  <!-- 班表(人工派遣結果)匯入報告 -->
-  <div v-if="schedImporting" class="alert alert-dark py-2">
-    📋 班表匯入中…(逐列地理編碼,未命中地址簿者會打 Map8,請稍候)
-  </div>
-  <div v-if="schedReport" class="alert" :class="schedReport.error ? 'alert-danger' : 'alert-dark'">
-    <template v-if="schedReport.error">班表匯入失敗:{{ schedReport.error }}</template>
-    <template v-else>
-      <strong>班表匯入完成</strong>(服務日期 {{ (schedReport.dates || []).join('、') }}):
-      建立人工派遣 <span class="text-success fw-bold">{{ schedReport.imported }}</span> 筆,
-      略過假單 {{ schedReport.skipped_fake }} 筆;
-      取代既有訂單 {{ schedReport.deleted_orders }} / 派遣紀錄 {{ schedReport.deleted_history }} 筆。
-      地理編碼:命中 {{ schedReport.geocoded }}、未命中 <span :class="schedReport.geocode_miss ? 'text-danger' : ''">{{ schedReport.geocode_miss }}</span>;
-      新建車 {{ schedReport.vehicles_created }}、司機 {{ schedReport.drivers_created }}。
-      <span class="text-muted">→ 可至「🚐 逐車對比」檢視當日人工 vs 自動。</span>
-      <details v-if="schedReport.errors?.length" class="small mt-1">
-        <summary class="text-danger">略過/失敗 {{ schedReport.errors.length }} 筆(展開)</summary>
-        <ul class="mb-0">
-          <li v-for="(er, i) in schedReport.errors" :key="i">{{ er.row }}:{{ er.error }}</li>
-        </ul>
-      </details>
-    </template>
-  </div>
-
-  <!-- AI 文件匯入報告 -->
-  <div v-if="docImporting" class="alert alert-primary py-2">
-    🤖 AI 解析文件中…(抽取訂單需數秒~數十秒,請稍候)
-  </div>
-  <div v-if="docReport" class="alert" :class="docReport.error ? 'alert-danger' : 'alert-primary'">
-    <template v-if="docReport.error">AI 文件匯入失敗:{{ docReport.error }}</template>
-    <template v-else>
-      <strong>AI 文件匯入完成</strong>(檔案 {{ docReport.filename }}):
-      抽取 {{ docReport.extracted }} 筆,建立 <span class="text-success fw-bold">{{ docReport.created }}</span> 筆,
-      失敗 <span class="text-danger fw-bold">{{ docReport.failed }}</span> 筆;
-      自動編碼成功 {{ docReport.geocoded?.done }} 筆<span v-if="docReport.geocoded?.failed">、失敗 {{ docReport.geocoded.failed }} 筆</span>。
-      <div v-if="docReport.preview?.length" class="table-responsive mt-2">
-        <table class="table table-sm table-bordered bg-white mb-1">
-          <thead><tr><th>日期</th><th>時間</th><th>乘客</th><th>上車</th><th>下車</th><th>車種</th><th>人</th></tr></thead>
-          <tbody>
-            <tr v-for="(p, i) in docReport.preview" :key="i">
-              <td>{{ p.service_date }}</td><td>{{ p.pickup_time }}</td><td>{{ p.passenger_name }}</td>
-              <td class="small">{{ p.pickup_address }}</td><td class="small">{{ p.dropoff_address }}</td>
-              <td>{{ p.vehicle_type === 'welfare' ? '福祉' : '一般' }}</td><td>{{ p.pax }}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <details v-if="docReport.errors?.length" class="small">
-        <summary class="text-danger">未抽取/失敗 {{ docReport.errors.length }} 筆(展開)</summary>
-        <ul class="mb-0">
-          <li v-for="(er, i) in docReport.errors" :key="i">{{ er.row }}:{{ er.error }}</li>
-        </ul>
-      </details>
-      <div class="small text-muted mt-1">⚠️ 文件內容(可能含個資)已送往 Claude 抽取;正式處理真實個資前請評估地端方案。</div>
-    </template>
-  </div>
-
-  <!-- 匯入進度條 -->
-  <div v-if="importProgress" class="card mb-3 border-primary">
-    <div class="card-body py-2">
-      <div class="d-flex justify-content-between small mb-1">
-        <span>
-          <span v-if="importProgress.phase === 'import'">
-            📥 匯入中… {{ importProgress.current }} / {{ importProgress.total }} 列
-            （已建立 {{ importProgress.created }} 筆）
-          </span>
-          <span v-else>
-            📍 地理編碼中… {{ importProgress.current }} / {{ importProgress.total }} 筆
-            （成功 {{ importProgress.geo_done }}・失敗 {{ importProgress.geo_failed }}）
-          </span>
-        </span>
-        <span class="text-muted">{{ importProgress.total ? Math.round(importProgress.current / importProgress.total * 100) : 0 }}%</span>
-      </div>
-      <div class="progress" style="height:8px">
-        <div
-          class="progress-bar progress-bar-striped progress-bar-animated"
-          :class="importProgress.phase === 'geocode' ? 'bg-info' : 'bg-primary'"
-          :style="{ width: (importProgress.total ? importProgress.current / importProgress.total * 100 : 0) + '%' }"
-        ></div>
-      </div>
+  <!-- 大豐匯入報告 -->
+  <div v-if="daifongImporting" class="alert alert-success py-2">📥 大豐班表匯入中，請稍候…</div>
+  <div v-else-if="daifongReport" class="card border-success mb-3">
+    <div class="card-header d-flex justify-content-between align-items-center bg-success text-white">
+      <span>📥 大豐班表匯入結果</span>
+      <button type="button" class="btn-close btn-close-white" @click="daifongReport = null"></button>
     </div>
-  </div>
-
-  <!-- 匯入報告 -->
-  <div v-if="importReport" class="alert" :class="importReport.error ? 'alert-danger' : 'alert-info'">
-    <template v-if="importReport.error">匯入失敗:{{ importReport.error }}</template>
-    <template v-else>
-      <strong>匯入完成</strong>(檔案 {{ importReport.filename }}):
-      成功 <span class="text-success fw-bold">{{ importReport.created }}</span> 筆,
-      失敗 <span class="text-danger fw-bold">{{ importReport.failed }}</span> 筆。
-      <span v-if="importReport.geocoded">
-        ・自動編碼 <span class="text-success fw-bold">{{ importReport.geocoded.done }}</span> 筆<span
-          v-if="importReport.geocoded.failed">,編碼失敗 {{ importReport.geocoded.failed }} 筆</span>。
-      </span>
-      <ul v-if="importReport.errors?.length" class="mb-0 mt-2 small">
-        <li v-for="(er, i) in importReport.errors" :key="i">第 {{ er.row }} 列:{{ er.error }}</li>
-      </ul>
-    </template>
-    <button type="button" class="btn-close float-end" @click="importReport = null"></button>
+    <div class="card-body">
+      <template v-if="daifongReport.error">
+        <span class="text-danger">匯入失敗：{{ daifongReport.error }}</span>
+      </template>
+      <template v-else>
+        <strong>匯入完成</strong>：共 <b>{{ daifongReport.imported }}</b> 筆，
+        略過 {{ daifongReport.skipped }} 筆，
+        涵蓋 {{ daifongReport.date_count }} 個服務日期
+        ({{ (daifongReport.dates || [])[0] }} ~ {{ (daifongReport.dates || []).slice(-1)[0] }})。
+        <div v-if="daifongReport.errors?.length" class="mt-2 small text-danger">
+          錯誤(前{{ daifongReport.errors.length }}筆)：
+          <ul class="mb-0">
+            <li v-for="e in daifongReport.errors" :key="e">{{ e }}</li>
+          </ul>
+        </div>
+      </template>
+    </div>
   </div>
 
   <!-- 地理編碼報告 -->
@@ -506,14 +300,7 @@ async function onVehAssigned() {
   <div v-if="dispatchReport" class="card border-warning mb-3">
     <div class="card-header bg-warning-subtle d-flex justify-content-between align-items-center">
       <strong>🚀 排班結果</strong>
-      <div class="d-flex gap-2 align-items-center">
-        <button
-          class="btn btn-sm btn-outline-primary"
-          :disabled="aiAnalyzing"
-          @click="runAiAnalyze"
-        >{{ aiAnalyzing ? '🤖 分析中…' : '🤖 AI 分析' }}</button>
-        <button type="button" class="btn-close" @click="dispatchReport = null"></button>
-      </div>
+      <button type="button" class="btn-close" @click="dispatchReport = null"></button>
     </div>
     <div class="card-body">
       <template v-if="dispatchReport.error">
@@ -653,6 +440,32 @@ async function onVehAssigned() {
           </div>
         </div>
 
+        <div class="col-md-4">
+          <label class="form-label">付款方式</label>
+          <select v-model="form.payment_type" class="form-select">
+            <option value="">—未設定—</option>
+            <option value="subsidy">補助</option>
+            <option value="self">自費</option>
+          </select>
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">性質</label>
+          <input v-model="form.order_nature" class="form-control" placeholder="例：就醫、洗腎、復健" />
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">客戶所在地區</label>
+          <input v-model="form.customer_region" class="form-control" placeholder="例：信義區" />
+        </div>
+        <div class="col-md-4">
+          <label class="form-label">身份資格</label>
+          <select v-model="form.eligibility" class="form-select">
+            <option value="">—未設定—</option>
+            <option value="一般">一般</option>
+            <option value="低收入戶">低收入戶</option>
+            <option value="中低收9%">中低收9%</option>
+            <option value="偏鄉低收2400">偏鄉低收2400</option>
+          </select>
+        </div>
         <div class="col-12">
           <label class="form-label">備註</label>
           <textarea v-model="form.note" class="form-control" rows="2"></textarea>
@@ -714,76 +527,94 @@ async function onVehAssigned() {
 
   <!-- 列表 -->
   <div class="table-responsive">
-    <table class="table table-striped table-hover align-middle">
+    <table class="table table-striped table-hover align-middle small">
       <thead>
         <tr>
-          <th>#</th><th>日期</th><th>上車時間</th><th>乘客</th>
-          <th>上車 → 下車</th><th>📍</th><th>人</th><th>車種</th><th>派遣</th><th>狀態</th><th></th>
+          <th>日期 / 時間</th>
+          <th>乘客</th>
+          <th>上車地址</th>
+          <th>下車地址</th>
+          <th>車種</th>
+          <th>指派車輛</th>
+          <th>狀態</th>
+          <th class="text-end">操作</th>
         </tr>
       </thead>
       <tbody>
-        <tr v-for="o in store.items" :key="o.id">
-          <td>{{ o.id }}</td>
-          <td>{{ o.service_date }}</td>
-          <td>{{ (o.pickup_time || '').slice(11, 16) }}</td>
-          <td>{{ o.passenger_name || '-' }}</td>
-          <td class="small">{{ o.pickup_address }} → {{ o.dropoff_address }}</td>
-          <td>
-            <span v-if="hasCoords(o)" title="已有座標">✅</span>
-            <span v-else title="尚未地理編碼" class="text-warning">⚠️</span>
+        <tr v-for="o in pagedOrders" :key="o.id">
+          <!-- 日期 / 時間 -->
+          <td class="text-nowrap">
+            <div>{{ o.service_date }}</div>
+            <div class="text-muted">{{ (o.pickup_time || '').slice(11, 16) }}</div>
           </td>
-          <td>{{ o.pax }}</td>
+          <!-- 乘客 + 標記 -->
           <td>
-            <span class="badge" :class="o.vehicle_type === 'welfare' ? 'bg-warning text-dark' : 'bg-secondary'">
-              {{ o.vehicle_type === 'welfare' ? '福祉' : '一般' }}
+            <div>
+              <span v-if="o.booking_source && o.booking_source.includes('候補')"
+                    class="badge bg-secondary me-1" style="font-size:.62rem">候補</span>
+              <span class="fw-semibold">{{ o.passenger_name || '—' }}</span>
+            </div>
+            <div class="text-muted" style="font-size:.75rem">
+              <span v-if="o.payment_type === 'subsidy'" class="badge bg-primary me-1" style="font-size:.6rem">補助</span>
+              <span v-else-if="o.payment_type === 'self'" class="badge bg-secondary me-1" style="font-size:.6rem">自費</span>
+              <span v-if="o.customer_region">{{ o.customer_region }}</span>
+              <span v-if="o.eligibility" class="ms-1 text-muted">{{ o.eligibility }}</span>
+            </div>
+          </td>
+          <!-- 上車地址 -->
+          <td style="max-width:200px">
+            <div class="text-truncate" :title="o.pickup_address">{{ o.pickup_address }}</div>
+            <span v-if="!hasCoords(o)" class="text-warning" style="font-size:.7rem">⚠ 未編碼</span>
+          </td>
+          <!-- 下車地址 -->
+          <td style="max-width:200px">
+            <div class="text-truncate" :title="o.dropoff_address">{{ o.dropoff_address }}</div>
+          </td>
+          <!-- 車種 -->
+          <td class="text-nowrap">
+            <span class="badge" :class="o.vehicle_type === 'welfare' ? 'bg-warning text-dark' : 'bg-light text-dark border'">
+              {{ o.vehicle_type === 'welfare' ? '♿ 福祉' : '一般' }}
             </span>
           </td>
-          <td class="small text-nowrap">
-            <template v-if="o.assigned_vehicle_id">
-              <span class="badge bg-dark">{{ vehicleLabel(o.assigned_vehicle_id) }}</span>
-              <span class="text-muted"> #{{ o.dispatch_seq }} · {{ fmtEta(o.eta) }}</span>
-            </template>
+          <!-- 指派車輛 -->
+          <td class="text-nowrap">
+            <span v-if="o.assigned_vehicle_id" class="badge bg-dark">{{ vehicleLabel(o.assigned_vehicle_id) }}</span>
             <span v-else class="text-muted">—</span>
           </td>
-          <td><span class="badge bg-info text-dark">{{ STATUS[o.status] || o.status }}</span></td>
-          <td class="text-nowrap">
+          <!-- 狀態 -->
+          <td>
+            <span class="badge"
+              :class="{
+                'bg-success': o.status==='scheduled',
+                'bg-primary': o.status==='ongoing',
+                'bg-dark':    o.status==='done',
+                'bg-secondary': o.status==='canceled',
+                'bg-warning text-dark': o.status==='imported',
+              }">
+              {{ STATUS[o.status] || o.status }}
+            </span>
+          </td>
+          <!-- 操作 -->
+          <td class="text-nowrap text-end">
             <button class="btn btn-sm btn-outline-primary me-1" @click="openEdit(o)">編輯</button>
-            <button
-              v-if="hasCoords(o) && !['canceled','done'].includes(o.status)"
-              class="btn btn-sm btn-outline-info me-1"
-              title="區域親和建議司機"
-              @click="suggestZone(o)"
-            >建議</button>
-            <button
-              v-if="hasCoords(o) && !['canceled','done'].includes(o.status)"
-              class="btn btn-sm btn-outline-primary me-1"
-              title="最佳車輛建議(真實插入成本 + 可切換車隊)"
-              @click="openSuggestVeh(o)"
-            >💡最佳車</button>
-            <button
-              v-if="o.status === 'scheduled'"
-              class="btn btn-sm btn-outline-success me-1"
-              title="標記為進行中(重排時鎖定)"
-              @click="setStatus(o, 'ongoing')"
-            >開始</button>
-            <button
-              v-if="o.status === 'ongoing'"
-              class="btn btn-sm btn-outline-dark me-1"
-              @click="setStatus(o, 'done')"
-            >完成</button>
-            <button
-              v-if="!['canceled','done'].includes(o.status)"
-              class="btn btn-sm btn-outline-warning me-1"
-              @click="cancelOrder(o)"
-            >取消</button>
+            <button v-if="hasCoords(o) && !['canceled','done'].includes(o.status)"
+                    class="btn btn-sm btn-outline-primary me-1" title="最佳車輛建議"
+                    @click="openSuggestVeh(o)">💡</button>
+            <button v-if="o.status==='scheduled'"
+                    class="btn btn-sm btn-outline-success me-1" @click="setStatus(o,'ongoing')">開始</button>
+            <button v-if="o.status==='ongoing'"
+                    class="btn btn-sm btn-outline-dark me-1" @click="setStatus(o,'done')">完成</button>
+            <button v-if="!['canceled','done'].includes(o.status)"
+                    class="btn btn-sm btn-outline-warning me-1" @click="cancelOrder(o)">取消</button>
             <button class="btn btn-sm btn-outline-danger" @click="remove(o)">刪除</button>
           </td>
         </tr>
         <tr v-if="!store.items.length">
-          <td colspan="11" class="text-center text-muted py-4">尚無訂單,點右上角新增。</td>
+          <td colspan="8" class="text-center text-muted py-4">尚無訂單，點右上角新增。</td>
         </tr>
       </tbody>
     </table>
+    <Pagination :total="store.items.length" v-model:page="currentPage" :page-size="PAGE_SIZE" />
   </div>
 
   <SuggestVehicle :order="suggestVehOrder"

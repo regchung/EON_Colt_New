@@ -101,7 +101,7 @@ const sortedVehicles = computed(() => {
   <div class="card shadow-sm mb-3">
     <div class="card-body">
       <div class="row g-2 align-items-end">
-        <div class="col-6 col-md-3">
+        <div v-if="fleets.length > 1" class="col-6 col-md-3">
           <label class="form-label small mb-1">車行</label>
           <select v-model="fleet" class="form-select" @change="onFleetChange">
             <option v-for="f in fleets" :key="f" :value="f">{{ f }}</option>

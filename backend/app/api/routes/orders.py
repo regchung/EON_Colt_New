@@ -14,10 +14,63 @@ from app.db.session import get_db
 from app.models.order import Order
 from app.schemas.order import OrderCreate, OrderOut, OrderUpdate
 from app.services import doc_ingest
+from app.services import daifong_importer
 from app.services.geocode import geocode
 from app.services.importer import parse_orders
 
 router = APIRouter(prefix="/orders", tags=["orders"])
+
+
+@router.get("/stats")
+def order_stats(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    db: Session = Depends(get_db),
+):
+    """儀表板用：訂單總數、一般訂單、候補成功數、候補成功率（自動派遣結果）。
+    預設為今日；可傳 date_from / date_to 查區間。"""
+    from datetime import date as date_cls
+    if date_from is None and date_to is None:
+        date_from = date_to = date_cls.today()
+
+    def _q():
+        q = select(func.count()).select_from(Order)
+        if date_from:
+            q = q.where(Order.service_date >= date_from)
+        if date_to:
+            q = q.where(Order.service_date <= date_to)
+        return q
+
+    total      = db.scalar(_q()) or 0
+    # 已派遣（scheduled / ongoing / done）
+    dispatched = db.scalar(_q().where(Order.status.in_(['scheduled', 'ongoing', 'done']))) or 0
+    # 尚未派遣（imported）
+    unassigned = db.scalar(_q().where(Order.status == 'imported')) or 0
+    # 取消 / 其他
+    other      = total - dispatched - unassigned
+
+    standby_total   = db.scalar(_q().where(Order.booking_source.like('%候補%'))) or 0
+    standby_success = db.scalar(
+        _q().where(Order.booking_source.like('%候補%'))
+            .where(Order.status.in_(['scheduled', 'ongoing', 'done']))
+    ) or 0
+    normal        = total - standby_total
+    rate          = round(standby_success / standby_total * 100, 1) if standby_total else 0
+    dispatch_rate = round(dispatched / total * 100, 1) if total else 0
+
+    return {
+        "date_from":       date_from.isoformat() if date_from else None,
+        "date_to":         date_to.isoformat()   if date_to   else None,
+        "total":           total,
+        "dispatched":      dispatched,
+        "unassigned":      unassigned,
+        "other":           other,
+        "dispatch_rate":   dispatch_rate,
+        "normal":          normal,
+        "standby_total":   standby_total,
+        "standby_success": standby_success,
+        "standby_rate":    rate,
+    }
 
 TEMPLATE_CSV = (
     "服務日期,上車時間,彈性,乘客姓名,電話,上車地址,下車地址,人數,車種,輪椅,共乘,備註\n"
@@ -29,20 +82,23 @@ TEMPLATE_CSV = (
 @router.get("", response_model=list[OrderOut])
 def list_orders(
     skip: int = 0,
-    limit: int = 100,
+    limit: int = 500,
     service_date: date | None = None,
     status: str | None = None,
     vehicle_type: str | None = None,
     db: Session = Depends(get_db),
 ):
-    return crud.list(
-        db,
-        skip=skip,
-        limit=limit,
-        service_date=service_date,
-        status=status,
-        vehicle_type=vehicle_type,
-    )
+    from sqlalchemy import select, desc
+    from app.models.order import Order as OrderModel
+    stmt = select(OrderModel)
+    if service_date:
+        stmt = stmt.where(OrderModel.service_date == service_date)
+    if status:
+        stmt = stmt.where(OrderModel.status == status)
+    if vehicle_type:
+        stmt = stmt.where(OrderModel.vehicle_type == vehicle_type)
+    stmt = stmt.order_by(desc(OrderModel.service_date), desc(OrderModel.pickup_time)).offset(skip).limit(limit)
+    return list(db.scalars(stmt).all())
 
 
 @router.post("", response_model=OrderOut, status_code=201)
@@ -57,7 +113,7 @@ def download_template():
     return Response(
         content=body,
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=eon_colt_import_template.csv"},
+        headers={"Content-Disposition": "attachment; filename=dr_fish_import_template.csv"},
     )
 
 
@@ -203,6 +259,23 @@ async def import_doc(
             for o in created_orders[:20]
         ],
     }
+
+
+@router.post("/import-daifong")
+async def import_daifong(
+    file: UploadFile = File(...),
+    replace_date: bool = False,
+    db: Session = Depends(get_db),
+):
+    """大豐班表 Excel 匯入。
+    replace_date=true：先刪除相同服務日期的既有訂單，再匯入（冪等）。
+    """
+    content = await file.read()
+    try:
+        result = daifong_importer.import_excel(db, content, replace_date=replace_date)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"匯入失敗：{e}")
+    return result
 
 
 @router.post("/{id}/geocode")

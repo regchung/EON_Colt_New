@@ -54,7 +54,7 @@ async function exportDispatch() {
     a.href = url
     const tag = expLayout.value === 'per_vehicle' ? '每車表' : '總表'
     const stag = source.value === 'auto' ? '自動' : '人工'
-    a.download = `EON_COLT_${stag}派遣_${expDate.value}_${expFleet.value || '全車行'}_${tag}.xlsx`
+    a.download = `DR_FISH_${stag}派遣_${expDate.value}_${expFleet.value || '全車行'}_${tag}.xlsx`
     a.click()
     URL.revokeObjectURL(url)
   } catch (e) {
@@ -73,7 +73,7 @@ async function exportCsv() {
   const a = document.createElement('a')
   a.href = url
   const tag = source.value === 'auto' ? '自動' : '人工'
-  a.download = `eon_colt_${tag}_${dateFrom.value}_${dateTo.value}.csv`
+  a.download = `dr_fish_${tag}_${dateFrom.value}_${dateTo.value}.csv`
   a.click()
   URL.revokeObjectURL(url)
 }
@@ -81,6 +81,21 @@ async function exportCsv() {
 function pct(n, total) {
   return total ? Math.round((n / total) * 100) : 0
 }
+
+// --- 需求預測（移植自雲DrCOLT）---
+const forecast = ref([])
+const loadingFc = ref(false)
+async function loadForecast() {
+  loadingFc.value = true
+  try {
+    const { data: fd } = await client.get('/dispatch/demand-forecast', {
+      params: { lookback_weeks: 8, horizon_days: 14 }
+    })
+    forecast.value = fd?.horizon || fd?.days || []
+  } catch { /* 忽略 */ }
+  finally { loadingFc.value = false }
+}
+onMounted(loadForecast)
 
 // 趨勢圖資料(由 by_day 推導)
 const trendLabels = computed(() => (data.value?.by_day || []).map((d) => d.date.slice(5)))
@@ -105,7 +120,7 @@ const rateSeries = computed(() => [
           <label class="form-label mb-1 small">日期</label>
           <input v-model="expDate" type="date" class="form-control form-control-sm" />
         </div>
-        <div class="col-6 col-md-3">
+        <div v-if="fleets.length > 1" class="col-6 col-md-3">
           <label class="form-label mb-1 small">車行</label>
           <select v-model="expFleet" class="form-select form-select-sm">
             <option value="">全車行</option>
@@ -211,6 +226,67 @@ const rateSeries = computed(() => [
           </tbody>
         </table>
       </div></div></div>
+
+      <!-- 每日明細表（移植自雲DrCOLT）-->
+      <div class="col-12"><div class="card shadow-sm"><div class="card-body p-0">
+        <div class="px-3 pt-3 pb-1 fw-semibold">每日明細</div>
+        <div class="table-responsive" style="max-height:320px;overflow-y:auto">
+          <table class="table table-hover table-sm mb-0 small">
+            <thead class="table-light sticky-top">
+              <tr>
+                <th>服務日期</th><th class="text-end">總訂單</th>
+                <th class="text-end text-success">已派</th>
+                <th class="text-end text-danger">未派</th>
+                <th class="text-end">派遣率</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="row in data.by_day" :key="row.date">
+                <td>{{ row.date }}</td>
+                <td class="text-end">{{ row.total }}</td>
+                <td class="text-end text-success">{{ row.assigned ?? 0 }}</td>
+                <td class="text-end text-danger">{{ row.unassigned ?? 0 }}</td>
+                <td class="text-end">
+                  <span :class="pct(row.assigned??0,row.total)>=90?'text-success':pct(row.assigned??0,row.total)>=70?'text-warning':'text-danger'">
+                    {{ row.total ? pct(row.assigned??0, row.total) + '%' : '—' }}
+                  </span>
+                </td>
+              </tr>
+              <tr v-if="!data.by_day.length">
+                <td colspan="5" class="text-center text-muted py-3">無資料</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div></div></div>
     </div>
   </template>
+
+  <!-- 未來需求預測（移植自雲DrCOLT）-->
+  <div class="card shadow-sm mt-3">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+      <span class="fw-semibold">📅 未來 14 日需求預測</span>
+      <button class="btn btn-sm btn-outline-secondary" :disabled="loadingFc" @click="loadForecast">
+        <span v-if="loadingFc" class="spinner-border spinner-border-sm me-1"></span>更新
+      </button>
+    </div>
+    <div class="card-body p-0">
+      <table class="table table-hover table-sm mb-0 small">
+        <thead class="table-light">
+          <tr><th>日期</th><th>星期</th><th class="text-end">預測趟次</th><th class="text-end">建議車輛數</th></tr>
+        </thead>
+        <tbody>
+          <tr v-for="row in forecast" :key="row.date">
+            <td>{{ row.date }}</td>
+            <td>{{ row.name }}</td>
+            <td class="text-end fw-bold">{{ row.predicted_trips ?? row.forecast_trips ?? '—' }}</td>
+            <td class="text-end text-primary">{{ row.suggest_vehicles ?? row.suggested_vehicles ?? '—' }}</td>
+          </tr>
+          <tr v-if="!forecast.length">
+            <td colspan="4" class="text-center text-muted py-3">點「更新」載入（需有歷史訂單資料）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </template>

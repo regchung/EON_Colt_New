@@ -30,6 +30,10 @@ from app.services import (
 )
 from app.services import vehicle_suggest as vehicle_suggest_svc
 from app.services import settings as app_settings
+from app.services import schedule_validator
+from app.services import unscheduled_assigner
+from app.services import conflict_resolver
+from app.services import agent_dispatcher
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
 
@@ -38,10 +42,131 @@ _COLORS = ["#e6194B", "#3cb44b", "#4363d8", "#f58231", "#911eb4", "#42d4f4", "#f
 
 
 @router.post("/run")
-def run(service_date: date, ai: bool = False, db: Session = Depends(get_db)):
-    """對某日訂單執行 VROOM 自動排班，寫回派遣結果並回傳路線報告。
-    ai=true 時額外呼叫 Claude 產出 AI 分析摘要。
+def run(
+    service_date: date,
+    ai: bool = False,
+    reset_scheduled: bool = True,
+    late_tolerance_min: int = 10,
+    max_trips_welfare: int = 16,
+    max_trips_normal: int = 14,
+    db: Session = Depends(get_db),
+):
+    """多智能體拍賣派遣（主要派遣入口）。
+
+    預設行為：清除當日既有指派，以時間順序逐筆拍賣全部訂單，
+    寫入指派結果並補建 RouteStop（上下車 ETA）。
+
+    ai=true  額外呼叫 Claude 產出 AI 分析摘要。
+    reset_scheduled=false  只補排 imported 訂單（增量模式）。
     """
+    TW = timezone(timedelta(hours=8))
+
+    # ── 1. Agent 派遣 ─────────────────────────────────────────────────────
+    result = agent_dispatcher.run(
+        db, service_date,
+        dry_run=False,
+        reset_scheduled=reset_scheduled,
+        late_tolerance_min=late_tolerance_min,
+        max_trips_welfare=max_trips_welfare,
+        max_trips_normal=max_trips_normal,
+    )
+    s = result["summary"]
+    if s["total"] == 0:
+        raise HTTPException(status_code=400, detail="當日無可排班訂單（請先匯入訂單）")
+
+    # ── 2. 取已指派訂單（按車輛、接送時間排序）────────────────────────
+    assigned_orders: list[Order] = list(db.scalars(
+        select(Order).where(
+            Order.service_date == service_date,
+            Order.status == "scheduled",
+            Order.assigned_vehicle_id.is_not(None),
+            Order.pickup_lng.is_not(None),
+        ).order_by(Order.assigned_vehicle_id, Order.pickup_time)
+    ).all())
+
+    # ── 3. 建 order_id → dropoff_eta 對照表（直接取派遣時計算的值）──
+    dropoff_eta_map: dict[int, datetime] = {}
+    for item in result.get("assigned", []):
+        dt_str = item.get("dropoff_eta")
+        if dt_str:
+            try:
+                dropoff_eta_map[item["order_id"]] = datetime.fromisoformat(dt_str)
+            except Exception:
+                pass
+
+    # ── 4. 清舊 RouteStop，重建上下車站 ─────────────────────────────
+    db.query(RouteStop).filter(RouteStop.service_date == service_date).delete()
+
+    routes_report: dict[int, list[dict]] = {}
+    stop_seq: dict[int, int] = {}
+
+    for o in assigned_orders:
+        vid = o.assigned_vehicle_id
+        pickup_eta = o.pickup_time.astimezone(TW) if o.pickup_time else None
+        if pickup_eta is None:
+            continue
+
+        # 優先用派遣時的送達時刻；若無則 fallback pickup + 30 min
+        dropoff_eta = dropoff_eta_map.get(o.id) or (pickup_eta + timedelta(seconds=1800))
+
+        # RouteStop 上車
+        seq_p = stop_seq.get(vid, 0) + 1
+        stop_seq[vid] = seq_p
+        db.add(RouteStop(
+            service_date=service_date, vehicle_id=vid, seq=seq_p, kind="pickup",
+            order_id=o.id, lng=o.pickup_lng, lat=o.pickup_lat,
+            eta=pickup_eta, address=o.pickup_address,
+        ))
+        # RouteStop 下車
+        seq_d = seq_p + 1
+        stop_seq[vid] = seq_d
+        db.add(RouteStop(
+            service_date=service_date, vehicle_id=vid, seq=seq_d, kind="delivery",
+            order_id=o.id, lng=o.dropoff_lng, lat=o.dropoff_lat,
+            eta=dropoff_eta, address=o.dropoff_address,
+        ))
+
+        routes_report.setdefault(vid, []).append({
+            "seq": seq_p, "order_id": o.id, "type": "上車",
+            "eta": pickup_eta.strftime("%H:%M"), "addr": o.pickup_address,
+        })
+        routes_report[vid].append({
+            "order_id": o.id, "type": "下車",
+            "eta": dropoff_eta.strftime("%H:%M"), "addr": o.dropoff_address,
+        })
+
+    db.commit()
+
+    # ── 5. 組回傳（相容原 VROOM 格式）──────────────────────────────
+    unassigned_ids = [u["order_id"] for u in result.get("unscheduled", [])]
+    p2_count = sum(1 for r in result.get("assigned", []) if r.get("pass") == 2)
+
+    response = {
+        "service_date":   service_date.isoformat(),
+        "provider":       "agent_auction",
+        "vehicles_used":  s["vehicles_used"],
+        "orders_total":   s["total"],
+        "assigned":       s["assigned"],
+        "unassigned":     unassigned_ids,
+        "routes":         routes_report,
+        "total_duration_sec": 0,
+        "agent_detail": {
+            "pass1_assigned": s["assigned"] - p2_count,
+            "pass2_rescued":  p2_count,
+            "max_trips_welfare": max_trips_welfare,
+            "max_trips_normal":  max_trips_normal,
+        },
+    }
+
+    if ai:
+        response["ai_summary"] = ai_dispatch.analyze_dispatch(response)
+
+    return response
+
+
+@router.post("/run-vroom")
+def run_vroom(service_date: date, ai: bool = False, db: Session = Depends(get_db)):
+    """VROOM 最佳化排班（備用；支援共乘、複雜路由）。"""
     result = dispatcher.run_dispatch(db, service_date)
     if result.get("error"):
         raise HTTPException(status_code=400, detail=result["error"])
@@ -59,7 +184,7 @@ def export_dispatch(service_date: date, fleet: str | None = None, layout: str = 
         db, service_date, (fleet or None), per_vehicle=(layout == "per_vehicle"), source=source)
     suffix = "每車表" if layout == "per_vehicle" else "總表"
     stag = "自動" if source == "auto" else "人工"
-    name = f"EON_COLT_{stag}派遣_{service_date.isoformat()}_{fleet or '全車行'}_{suffix}.xlsx"
+    name = f"DR_FISH_{stag}派遣_{service_date.isoformat()}_{fleet or '全車行'}_{suffix}.xlsx"
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -407,10 +532,17 @@ def comparison_list(fleet: str | None = None, date_from: date | None = None,
 
 
 @router.post("/comparison/persist-day")
-def comparison_persist_day(service_date: date, db: Session = Depends(get_db)):
-    """把某日『自動派遣結果』全數落地(標準流程步驟①):對各車行跑對比(=自動派遣),
-    寫入彙總 dispatch_comparison + 未派 unassigned_record + **每車每停靠點 auto_dispatch_stop**。
-    只清/重寫該日。回傳寫入統計。"""
+def comparison_persist_day(service_date: date,
+                           source: str = "run",
+                           db: Session = Depends(get_db)):
+    """把某日派遣結果落地至 auto_dispatch_stop / dispatch_comparison / unassigned_record。
+
+    source=run（預設）：從 run_dispatch 已寫入的 route_stop+orders 建立，
+                        不重跑 VROOM，看板顯示與實際派遣完全一致（建議用法）。
+    source=vroom：重新跑 VROOM 對比分析（原行為，適合獨立比對研究）。
+    """
+    if source == "run":
+        return comparison.persist_day_from_run(db, service_date)
     return comparison.persist_day(db, service_date)
 
 
@@ -511,7 +643,7 @@ def comparison_export_range(date_from: date, date_to: date, fleet: str | None = 
                             db: Session = Depends(get_db)):
     """匯出某日期區間的人工 vs 自動比對(Excel:逐日總覽 + 各車行日)。"""
     data = comparison_export.summary_workbook(db, date_from, date_to, fleet or None)
-    name = f"EON_COLT_比對_{date_from.isoformat()}_{date_to.isoformat()}_{fleet or '全車行'}.xlsx"
+    name = f"DR_FISH_比對_{date_from.isoformat()}_{date_to.isoformat()}_{fleet or '全車行'}.xlsx"
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -524,7 +656,7 @@ def comparison_by_vehicle_export(fleet: str, service_date: date, window_min: int
                                  db: Session = Depends(get_db)):
     """匯出某日某車行的逐車對比明細(Excel)。"""
     data = comparison_export.by_vehicle_workbook(db, fleet, service_date, window_min)
-    name = f"EON_COLT_逐車對比_{service_date.isoformat()}_{fleet}.xlsx"
+    name = f"DR_FISH_逐車對比_{service_date.isoformat()}_{fleet}.xlsx"
     return Response(
         content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -777,6 +909,57 @@ def unassigned_feedback(rid: int, body: UnassignedFeedbackIn,
     return {"id": r.id, "feedback_category": r.feedback_category, "by": r.feedback_by}
 
 
+@router.post("/assign-unscheduled")
+def assign_unscheduled(
+    service_date: date,
+    max_detour_km: float = 15.0,
+    late_tolerance_min: int = 10,
+    dry_run: bool = False,
+    db: Session = Depends(get_db),
+):
+    """未排班訂單自動指派。
+    依車種相容＋鄰近地理位置逐一分配，寫回 assigned_vehicle_id + status=scheduled。
+    late_tolerance_min：允許遲到幾分鐘（預設 10 分）。
+    dry_run=true 時只回傳計畫、不寫入 DB。
+    """
+    return unscheduled_assigner.assign(
+        db, service_date,
+        max_detour_km=max_detour_km,
+        late_tolerance_min=late_tolerance_min,
+        dry_run=dry_run,
+    )
+
+
+@router.get("/validate-schedule")
+def validate_schedule(service_date: date, db: Session = Depends(get_db)):
+    """排班合理性檢查。
+    回傳當日各車的時間重疊（overlap）與往返緊接（roundtrip）衝突清單。
+    同起同終的共乘趟次不列入。
+    """
+    return schedule_validator.validate(db, service_date)
+
+
+@router.post("/resolve-conflicts")
+def resolve_conflicts(
+    service_date: date,
+    late_tolerance_min: int = 10,
+    dry_run: bool = False,
+    db: Session = Depends(get_db),
+):
+    """衝突剔除 + 補排。
+    1. 執行 validate-schedule 取衝突清單。
+    2. 每個衝突對的後趟（nxt）改回 imported。
+    3. 對剔除訂單執行 assign-unscheduled 貪婪補排。
+    late_tolerance_min：允許遲到幾分鐘（預設 10 分）。
+    dry_run=true 時模擬但不寫 DB。
+    """
+    return conflict_resolver.resolve(
+        db, service_date,
+        late_tolerance_min=late_tolerance_min,
+        dry_run=dry_run,
+    )
+
+
 @router.get("/board")
 def dispatch_board_view(service_date: date, source: str = "human",
                         db: Session = Depends(get_db)):
@@ -784,6 +967,27 @@ def dispatch_board_view(service_date: date, source: str = "human",
     source=human(orders 當前指派,可拖放微調)| auto(自動派遣落地,唯讀)。"""
     from app.services import dispatch_board as board_svc
     return board_svc.board(db, service_date, source=source)
+
+
+@router.post("/board/reassign")
+def board_reassign(payload: dict, db: Session = Depends(get_db)):
+    """統一重指派端點：order_id + vehicle_id(None=移至未指派) + service_date。"""
+    order_id = payload.get("order_id")
+    vehicle_id = payload.get("vehicle_id")  # None = 移至未指派
+    o = db.get(Order, order_id)
+    if not o:
+        from fastapi import HTTPException
+        raise HTTPException(404, "訂單不存在")
+    if vehicle_id:
+        o.assigned_vehicle_id = vehicle_id
+        if o.status == "imported":
+            o.status = "scheduled"
+    else:
+        o.assigned_vehicle_id = None
+        if o.status in ("scheduled",):
+            o.status = "imported"
+    db.commit()
+    return {"ok": True, "order_id": order_id, "vehicle_id": vehicle_id}
 
 
 @router.get("/board/meta")
@@ -823,6 +1027,8 @@ def _plan_drv_by_veh(db: Session, service_date: date) -> dict:
 
 
 def _plan_order_task(o: Order) -> dict:
+    src = (o.booking_source or "").strip()
+    is_standby = "候補" in src
     return {
         "time": o.pickup_time.strftime("%H:%M") if o.pickup_time else "--:--",
         "passenger": o.passenger_name, "phone": o.passenger_phone,
@@ -833,6 +1039,8 @@ def _plan_order_task(o: Order) -> dict:
         "est_min": None, "order_no": o.source_order_no, "status": o.status,
         "fleet": o.fleet,
         "support_fleet": o.support_fleet if (o.support_fleet and o.support_fleet != o.fleet) else None,
+        "is_standby": is_standby,     # 候補訂單標記
+        "booking_source": o.booking_source,
     }
 
 
@@ -1008,3 +1216,91 @@ def daily_tasks(service_date: date, fleet: str | None = None, plate: str | None 
         "total_tasks": len(rows),
         "fleets": fleets_out,
     }
+
+
+@router.get("/traffic/etag-status")
+def etag_status(db: Session = Depends(get_db)):
+    """查看 TDX ETag 收集狀態：最新收集時間、總筆數、涵蓋天數。"""
+    from app.models.tdx_etag_speed import TdxEtagSpeed
+    total = db.scalar(select(func.count()).select_from(TdxEtagSpeed)) or 0
+    latest = db.scalar(select(func.max(TdxEtagSpeed.collected_at)))
+    oldest = db.scalar(select(func.min(TdxEtagSpeed.collected_at)))
+    pairs = db.scalar(select(func.count(TdxEtagSpeed.etag_pair_id.distinct()))) or 0
+    return {
+        "total_rows": total,
+        "unique_pairs": pairs,
+        "latest_collected_at": latest.isoformat() if latest else None,
+        "oldest_collected_at": oldest.isoformat() if oldest else None,
+        "days_accumulated": (latest - oldest).days + 1 if latest and oldest else 0,
+        "collector_running": bool(settings.TDX_CLIENT_ID),
+    }
+
+
+@router.get("/traffic/time-factors")
+def time_factors():
+    """查看各時段路況係數（靜態經驗值 or TDX 歷史均值）。"""
+    from app.services import tdx_traffic as tdx_svc
+    return {
+        "source": "static",  # Phase 2 後改為 "tdx_historical"
+        "factors": {
+            f"{h:02d}:00": round(tdx_svc.get_time_factor(h), 3)
+            for h in range(6, 21)
+        },
+        "note": "係數 < 1.0 表示塞車，OSRM 行程時間 ÷ 係數 = 補正後時間",
+    }
+
+
+@router.post("/agent-dispatch")
+def agent_dispatch(
+    service_date: date,
+    late_tolerance_min: int = 10,
+    dry_run: bool = True,
+    reset_scheduled: bool = False,
+    # ① 福祉車護欄
+    welfare_guard: bool = True,
+    welfare_guard_mul: float = 1.1,
+    # ② 對數負載均衡
+    log_load_balance: bool = True,
+    log_lb_coeff: float = 0.05,
+    # ③ 第二輪補救（分鐘；0 = 不啟用）
+    second_pass_min: int = 15,
+    # 每車每日趟次上限（0 = 不限）
+    max_trips_welfare: int = 16,
+    max_trips_normal: int = 14,
+    # ④ 前瞻保護（預留，尚未實作）
+    lookahead: bool = False,
+    # ⑤ 共乘聚合（預留）
+    shared_ride_min: int = 0,
+    shared_ride_km: float = 1.0,
+    db: Session = Depends(get_db),
+):
+    """多智能體拍賣派遣（每台車依時間序逐筆競標）。
+
+    基本選項：
+    - late_tolerance_min  遲到容忍分鐘（預設 10）
+    - dry_run             true = 只模擬，不寫 DB
+    - reset_scheduled     true = 清除當日所有指派，從頭全重排
+
+    最佳化選項：
+    - welfare_guard / welfare_guard_mul  ① 福祉車護欄，對 normal 訂單出價 × 倍率
+    - log_load_balance / log_lb_coeff   ② 對數負載均衡，防單車包攬
+    - second_pass_min                   ③ 二輪補救寬限（分鐘）；0 = 不啟用
+    - lookahead                         ④ 前瞻保護（預留）
+    - shared_ride_min / shared_ride_km  ⑤ 共乘聚合（預留）
+    """
+    return agent_dispatcher.run(
+        db, service_date,
+        late_tolerance_min=late_tolerance_min,
+        dry_run=dry_run,
+        reset_scheduled=reset_scheduled,
+        welfare_guard=welfare_guard,
+        welfare_guard_mul=welfare_guard_mul,
+        log_load_balance=log_load_balance,
+        log_lb_coeff=log_lb_coeff,
+        second_pass_min=second_pass_min,
+        max_trips_welfare=max_trips_welfare,
+        max_trips_normal=max_trips_normal,
+        lookahead=lookahead,
+        shared_ride_min=shared_ride_min,
+        shared_ride_km=shared_ride_km,
+    )

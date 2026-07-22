@@ -25,5 +25,6 @@ class Vehicle(Base):
     end_lat: Mapped[float | None] = mapped_column(Float)
     home_fleet: Mapped[str | None] = mapped_column(String(20))  # 最常所屬車行(共用車池,僅標記)
     vehicle_source: Mapped[str | None] = mapped_column(String(10))  # 車輛來源: 獎助 | 特約
+    district: Mapped[str | None] = mapped_column(String(10))    # 指定服務地區(新北市行政區);None=不限
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     suspended: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")  # 停派:不納入自動派遣

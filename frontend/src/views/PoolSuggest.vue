@@ -16,14 +16,14 @@ async function loadRecurring() {
 }
 onMounted(loadRecurring)
 
-const fleet = ref('台北')
+const fleet = ref('大豐')
 const date = ref('')
 const maxDetour = ref(15)
 const loading = ref(false)
 const error = ref('')
 const result = ref(null)
 
-const fleets = ['台北', '新北', '神同行', '基隆', '樂格適', '發隆興']
+// 單一車行，不需清單
 
 const consenting = ref(null)
 const toast = ref('')
@@ -91,12 +91,7 @@ async function consentGroup(group, idx) {
 
   <div class="card shadow-sm mb-3"><div class="card-body">
     <div class="row g-2 align-items-end">
-      <div class="col-6 col-md-3">
-        <label class="form-label">車行</label>
-        <select v-model="fleet" class="form-select">
-          <option v-for="f in fleets" :key="f" :value="f">{{ f }}</option>
-        </select>
-      </div>
+      <!-- 車行固定大豐 -->
       <div class="col-6 col-md-3">
         <label class="form-label">服務日期</label>
         <input v-model="date" type="date" class="form-control" />

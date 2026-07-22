@@ -1,12 +1,12 @@
-/* EON COLT service worker — Web Push 推播 */
+/* DrFish service worker — Web Push 推播 */
 self.addEventListener('push', (event) => {
   let data = {}
   try {
     data = event.data ? event.data.json() : {}
   } catch (e) {
-    data = { title: 'EON COLT', body: event.data ? event.data.text() : '' }
+    data = { title: 'DrFish', body: event.data ? event.data.text() : '' }
   }
-  const title = data.title || 'EON COLT 派遣'
+  const title = data.title || 'DrFish 派遣'
   const options = {
     body: data.body || '',
     tag: data.tag || undefined,

@@ -1,6 +1,7 @@
 <script setup>
-import { onMounted, ref, computed } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import client from '../api/client'
+import Pagination from '../components/Pagination.vue'
 
 const rows = ref([])
 // 篩選:搜尋(路線/姓名/司機/關鍵字)+ 車行,方便維護 BD03 等群組規則
@@ -16,6 +17,12 @@ const filteredRows = computed(() => {
       .some((x) => (x || '').toLowerCase().includes(s))
   })
 })
+
+// 分頁
+const PAGE_SIZE_F = 30
+const fPage = ref(1)
+const pagedFixed = computed(() => filteredRows.value.slice((fPage.value - 1) * PAGE_SIZE_F, fPage.value * PAGE_SIZE_F))
+watch(filteredRows, () => { fPage.value = 1 })
 const matchDate = ref(new Date().toISOString().slice(0, 10))
 const match = ref(null)
 async function runMatch() {
@@ -142,7 +149,7 @@ async function del(r) {
         <select v-model="form.match_field" class="form-select form-select-sm">
           <option v-for="m in MATCH_FIELDS" :key="m.v" :value="m.v">{{ m.t }}</option></select></div>
       <div class="col-6 col-md-2"><label class="form-label small mb-0">車行(選填)</label>
-        <input v-model="form.fleet" class="form-control form-control-sm" placeholder="新北" /></div>
+        <input v-model="form.fleet" class="form-control form-control-sm" placeholder="大豐" /></div>
       <div class="col-12 col-md-8"><label class="form-label small mb-0">備註</label>
         <input v-model="form.note" class="form-control form-control-sm" /></div>
       <div class="col-6 col-md-2 d-flex align-items-end">
@@ -270,7 +277,7 @@ async function del(r) {
   <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
     <input v-model="q" class="form-control form-control-sm" style="width:220px"
            placeholder="🔍 搜尋 路線/姓名/司機/關鍵字(如 BD03)" />
-    <select v-model="fleetFilter" class="form-select form-select-sm" style="width:150px">
+    <select v-if="fleetOptions.length > 1" v-model="fleetFilter" class="form-select form-select-sm" style="width:150px">
       <option value="">全部車行</option>
       <option v-for="f in fleetOptions" :key="f" :value="f">{{ f }}</option>
     </select>
@@ -283,7 +290,7 @@ async function del(r) {
         <th>路線</th><th>地點關鍵字</th><th>指定姓名</th><th>指定司機</th><th>對應車</th><th>時段</th><th>車行</th><th>啟用</th><th></th>
       </tr></thead>
       <tbody>
-        <tr v-for="r in filteredRows" :key="r.id">
+        <tr v-for="r in pagedFixed" :key="r.id">
           <td class="fw-semibold">{{ r.label }}</td>
           <td><code v-if="r.keyword">{{ r.keyword }}</code><span v-else class="text-muted">—</span></td>
           <td>{{ r.match_name || '—' }}</td>
@@ -304,6 +311,7 @@ async function del(r) {
           {{ rows.length ? '無符合篩選的規則' : '尚無固定行程' }}</td></tr>
       </tbody>
     </table>
+    <Pagination :total="filteredRows.length" v-model:page="fPage" :page-size="PAGE_SIZE_F" />
   </div>
   <p class="small text-muted">
     🔴「無車」表示該司機在系統內尚無對應車輛,需先到車輛/名冊建立,固定行程才能實際派遣。

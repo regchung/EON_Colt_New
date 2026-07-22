@@ -14,6 +14,7 @@ from app.models.dispatch_history import DispatchHistory
 from app.models.driver import Driver
 from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.order import Order
+from app.models.route import RouteStop
 from app.models.vehicle import Vehicle
 from app.services import matrix as matrix_svc
 from app.services import roster as roster_svc
@@ -33,6 +34,12 @@ def _mins(dt):
         return None
     t = dt.astimezone(TW)
     return t.hour * 60 + t.minute
+
+
+def _mins_to_hhmm(m: int | None) -> str | None:
+    if m is None:
+        return None
+    return f"{m // 60:02d}:{m % 60:02d}"
 
 
 def board(db: Session, service_date: date, source: str = "human") -> dict:
@@ -81,18 +88,45 @@ def board(db: Session, service_date: date, source: str = "human") -> dict:
         if dn:
             drv_by_veh[a.vehicle_id] = dn.name
 
+    # 從 route_stop 取 VROOM 實際下車 ETA（delivery step）
+    _delivery_eta: dict[int, str | None] = {}
+    for rs in db.scalars(
+        select(RouteStop).where(
+            RouteStop.service_date == service_date,
+            RouteStop.kind == "delivery",
+            RouteStop.order_id.is_not(None),
+            RouteStop.eta.is_not(None),
+        )
+    ).all():
+        _delivery_eta[rs.order_id] = _hhmm(rs.eta)
+
     by_veh: dict[int, list[Order]] = {}
     for o in assigned:
         by_veh.setdefault(o.assigned_vehicle_id, []).append(o)
 
     def trip(o):
         return {
-            "order_id": o.id, "time": _hhmm(o.pickup_time),
-            "eta": _hhmm(o.eta), "passenger": o.passenger_name,
-            "pickup": o.pickup_address, "dropoff": o.dropoff_address,
-            "pax": o.pax, "welfare": o.vehicle_type == "welfare" or o.need_wheelchair,
+            "order_id": o.id,
+            "pickup_time": _hhmm(o.pickup_time),   # DrCoLT 相容
+            "time": _hhmm(o.pickup_time),           # 保留舊欄位
+            "eta": _hhmm(o.eta),
+            "dropoff_time": _delivery_eta.get(o.id) or (_hhmm(o.dropoff_time) if hasattr(o, "dropoff_time") else None),
+            "passenger": o.passenger_name,
+            "pickup_addr": o.pickup_address,        # DrCoLT 相容
+            "pickup": o.pickup_address,             # 保留舊欄位
+            "dropoff_addr": o.dropoff_address,      # DrCoLT 相容
+            "dropoff": o.dropoff_address,           # 保留舊欄位
+            "pickup_lng": o.pickup_lng,
+            "pickup_lat": o.pickup_lat,
+            "dropoff_lng": o.dropoff_lng,
+            "dropoff_lat": o.dropoff_lat,
+            "pax": o.pax,
+            "need_welfare": o.vehicle_type == "welfare" or o.need_wheelchair,  # DrCoLT 相容
+            "welfare": o.vehicle_type == "welfare" or o.need_wheelchair,
+            "is_pool": o.pool_consent_at is not None and o.allow_pool,
+            "is_standby": "候補" in (o.booking_source or ""),
             "status": o.status, "fleet": o.fleet,
-            "support_fleet": o.support_fleet,   # 跨車行支援留痕(他隊車服務時 ≠ fleet)
+            "support_fleet": o.support_fleet,
         }
 
     # OSRM 可達性衝突:用真實車程判「前趟下車後,趕不趕得到下一趟上車」(取代固定佔用重疊)。
@@ -123,37 +157,47 @@ def board(db: Session, service_date: date, source: str = "human") -> dict:
     vehicles = []
     for vid in sorted(veh_ids, key=lambda x: (vmap[x].home_fleet or "" if x in vmap else "", vmap[x].plate or "" if x in vmap else "")):
         v = vmap.get(vid)
+        # 依 VROOM 實際 ETA 排序（無 ETA 則用預約時間排尾）
         trips_o = sorted(by_veh.get(vid, []), key=lambda o: o.pickup_time or service_date)
-        # 衝突偵測:前趟(上車→下車車程 + 處理)後,以 OSRM 車程趕到本趟上車點;來不及 → 衝突
+        # 衝突偵測：
+        # - VROOM 已排（有 eta）的訂單信任 VROOM，不重算物理可達性
+        # - 手動插入（無 eta）的訂單才做 OSRM 可達性檢查
         conflict_ids = set()
-        prev = None   # (order, pickup_idx, dropoff_idx, pickup_sec)
+        prev = None   # (order, pickup_idx, dropoff_idx, pickup_sec, has_eta)
         for o in trips_o:
-            st = _mins(o.pickup_time)
+            eta_dt = o.eta or o.pickup_time
+            st = _mins(eta_dt)
             if st is None or o.id not in ord_idx:
                 prev = None
                 continue
             st_sec = st * 60
             pu, do = ord_idx[o.id]
+            o_has_eta = o.eta is not None
             if prev is not None:
-                po, ppu, pdo, pst = prev
-                reach = pst + _drive(ppu, pdo) + _HANDLING_SEC + _drive(pdo, pu)
-                if reach > st_sec + _REACH_GRACE_SEC:
-                    conflict_ids.add(o.id)
-                    conflict_ids.add(po.id)
-            prev = (o, pu, do, st_sec)
+                po, ppu, pdo, pst, prev_has_eta = prev
+                # 只有手動單（前後任一沒有 VROOM ETA）才做衝突檢查
+                if not (o_has_eta and prev_has_eta):
+                    reach = pst + _drive(ppu, pdo) + _HANDLING_SEC + _drive(pdo, pu)
+                    if reach > st_sec + _REACH_GRACE_SEC:
+                        conflict_ids.add(o.id)
+                        conflict_ids.add(po.id)
+            prev = (o, pu, do, st_sec, o_has_eta)
         trips = []
-        for o in trips_o:
+        for idx_t, o in enumerate(trips_o):
             t = trip(o)
             t["conflict"] = o.id in conflict_ids
+            t["trip_index"] = idx_t   # 0=第一趟，不顯示遲到
             trips.append(t)
         vehicles.append({
             "vehicle_id": vid,
             "plate": v.plate if v else f"#{vid}",
             "driver": drv_by_veh.get(vid),
             "fleet": v.home_fleet if v else None,
+            "vehicle_type": v.type if v else "normal",
             "on_duty": vid in duty,
             "trip_count": len(trips),
             "conflicts": len(conflict_ids),
+            "has_conflict": len(conflict_ids) > 0,   # DrCoLT 相容
             "trips": trips,
         })
     return {
@@ -236,25 +280,42 @@ def _board_auto(db: Session, service_date: date) -> dict:
                 if (spans[i][2], spans[i - 1][2]) not in pool_pairs:
                     conflict_ids.add(spans[i][2]); conflict_ids.add(spans[i - 1][2])
         pool_oids = {oid for oid, _ in pool_pairs}
-        for s in slist:
+        for idx_t, s in enumerate(slist):
             o = omap.get(s.order_id)
+            _nw = (o.vehicle_type == "welfare" or o.need_wheelchair) if o else False
             trips.append({
-                "order_id": s.order_id, "time": _hhmm(o.pickup_time) if o else None,
-                "eta": _hhmm(s.eta), "passenger": o.passenger_name if o else None,
-                "pickup": o.pickup_address if o else None, "dropoff": o.dropoff_address if o else None,
+                "trip_index": idx_t,
+                "order_id": s.order_id,
+                "pickup_time": _hhmm(o.pickup_time) if o else None,
+                "time": _hhmm(o.pickup_time) if o else None,
+                "eta": _hhmm(s.eta),
+                "dropoff_time": _mins_to_hhmm(drop_min.get((vid, s.order_id))),
+                "passenger": o.passenger_name if o else None,
+                "pickup_addr": o.pickup_address if o else None,
+                "pickup": o.pickup_address if o else None,
+                "dropoff_addr": o.dropoff_address if o else None,
+                "dropoff": o.dropoff_address if o else None,
+                "pickup_lng": o.pickup_lng if o else None,
+                "pickup_lat": o.pickup_lat if o else None,
+                "dropoff_lng": o.dropoff_lng if o else None,
+                "dropoff_lat": o.dropoff_lat if o else None,
                 "pax": o.pax if o else None,
-                "welfare": (o.vehicle_type == "welfare" or o.need_wheelchair) if o else False,
+                "need_welfare": _nw, "welfare": _nw,
+                "is_pool": s.order_id in pool_oids,
+                "pooled": s.order_id in pool_oids,
                 "status": "auto", "fleet": o.fleet if o else None,
                 "support_fleet": (v.home_fleet if (v and o and (v.home_fleet or "") != (o.fleet or "")) else None),
                 "conflict": s.order_id in conflict_ids,
-                "pooled": s.order_id in pool_oids,
             })
         vehicles.append({
             "vehicle_id": vid, "col_key": f"{vid}-{fl or ''}",
             "plate": v.plate if v else f"#{vid}",
-            "driver": drv_by_veh.get(vid), "fleet": fl,   # 此路線所屬車行(逐車行對比)
+            "driver": drv_by_veh.get(vid), "fleet": fl,
+            "vehicle_type": vmap[vid].type if vid in vmap else "normal",
             "on_duty": True, "trip_count": len(trips),
-            "conflicts": len(conflict_ids), "trips": trips,
+            "conflicts": len(conflict_ids),
+            "has_conflict": len(conflict_ids) > 0,
+            "trips": trips,
         })
 
     un = list(db.scalars(select(UnassignedRecord).where(

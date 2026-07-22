@@ -1,9 +1,16 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, computed, watch } from 'vue'
 import client from '../api/client'
+import Pagination from '../components/Pagination.vue'
 
 const points = ref([])
 const unresolved = ref([])
+
+// 分頁
+const PAGE_SIZE_A = 50
+const aPage = ref(1)
+const pagedPoints = computed(() => points.value.slice((aPage.value - 1) * PAGE_SIZE_A, aPage.value * PAGE_SIZE_A))
+watch(points, () => { aPage.value = 1 })
 const loading = ref(false)
 
 const LEVEL = { '1': '門牌', '2': '門牌', '3': '路口', '4': '道路', fuzzy: '模糊', exact: '精確', approx: '路段' }
@@ -41,7 +48,7 @@ onMounted(load)
         </tr>
       </thead>
       <tbody>
-        <tr v-for="p in points" :key="p.id">
+        <tr v-for="p in pagedPoints" :key="p.id">
           <td>{{ p.id }}</td>
           <td class="fw-semibold">{{ p.standardized_address }}</td>
           <td class="small text-nowrap">{{ p.city }}{{ p.town }}</td>
@@ -61,6 +68,7 @@ onMounted(load)
         </tr>
       </tbody>
     </table>
+    <Pagination :total="points.length" v-model:page="aPage" :page-size="PAGE_SIZE_A" />
   </div>
 
   <div v-if="unresolved.length" class="alert alert-warning mt-2 small">

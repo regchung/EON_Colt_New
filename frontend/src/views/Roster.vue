@@ -19,8 +19,7 @@ const checkDate = ref('')
 const availability = ref(null)
 
 // 需求預測(weekday 基線)→ 建議排車
-const fleets = ['台北', '新北', '神同行', '基隆', '樂格適', '發隆興']
-const demandFleet = ref('台北')
+const demandFleet = ref('大豐')
 const demand = ref(null)
 const applying = ref(false)
 const applyResult = ref(null)
@@ -197,9 +196,7 @@ async function seedFromHistory() {
     <div class="card-header bg-info-subtle d-flex flex-wrap justify-content-between align-items-center gap-2 py-2">
       <span>📈 需求預測(weekday 基線 → 建議排車數)</span>
       <div class="d-flex align-items-center gap-2">
-        <select v-model="demandFleet" class="form-select form-select-sm" style="width:auto" @change="loadDemand">
-          <option v-for="f in fleets" :key="f" :value="f">{{ f }}</option>
-        </select>
+        <span class="badge bg-primary">大豐</span>
         <button class="btn btn-sm btn-info text-dark" :disabled="applying" @click="applyForecast">
           <span v-if="applying" class="spinner-border spinner-border-sm me-1"></span>套用建議到班表
         </button>

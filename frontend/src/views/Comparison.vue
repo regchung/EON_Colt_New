@@ -53,7 +53,7 @@ async function loadRows() {
 function dl(blob, name) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = url; a.download = `EON_COLT_${name}`; a.click(); URL.revokeObjectURL(url)
+  a.href = url; a.download = `DR_FISH_${name}`; a.click(); URL.revokeObjectURL(url)
 }
 async function exportSummary() {
   if (!rangeFrom.value || !rangeTo.value) { alert('請先選日期區間'); return }
@@ -138,7 +138,8 @@ function pct(n) { return (n || 0).toFixed(1) }
       </div>
     </div>
 
-    <!-- 各車行 -->
+    <!-- 各車行（多車行時才顯示） -->
+    <template v-if="Object.keys(summary?.by_fleet || {}).length > 1">
     <h6 class="text-muted mb-2 mt-3">各車行效益</h6>
     <div class="table-responsive mb-4">
       <table class="table table-sm table-striped align-middle">
@@ -158,7 +159,8 @@ function pct(n) { return (n || 0).toFixed(1) }
         </tbody>
       </table>
     </div>
-  </template>
+    </template><!-- /各車行 -->
+  </template><!-- /v-if summary -->
 
   <!-- 逐日明細:區間查詢 + 匯出 -->
   <div class="card shadow-sm mb-2 border-primary"><div class="card-body py-2">
@@ -167,7 +169,7 @@ function pct(n) { return (n || 0).toFixed(1) }
         <input v-model="rangeFrom" type="date" class="form-control form-control-sm" /></div>
       <div class="col-6 col-md-2"><label class="form-label mb-0 small">迄日</label>
         <input v-model="rangeTo" type="date" class="form-control form-control-sm" /></div>
-      <div class="col-6 col-md-3"><label class="form-label mb-0 small">車行</label>
+      <div v-if="Object.keys(summary?.by_fleet || {}).length > 1" class="col-6 col-md-3"><label class="form-label mb-0 small">車行</label>
         <select v-model="fleet" class="form-select form-select-sm">
           <option value="">全部車行</option>
           <option v-for="(s, f) in (summary?.by_fleet || {})" :key="f" :value="f">{{ f }}</option>

@@ -62,12 +62,8 @@ def _candidate_vehicle_ids(db: Session, service_date: date) -> dict[int, tuple]:
 
 
 def _in_scope(v: Vehicle, order: Order, fleet_scope: str | None) -> bool:
-    if not fleet_scope or fleet_scope in ("company", "all"):
-        return True
-    if fleet_scope == "own":   # 本車行/同區
-        return (dispatcher._region_of(v.home_fleet) == dispatcher._region_of(order.fleet)
-                or (v.home_fleet or "") == (order.fleet or ""))
-    return (v.home_fleet or "") == fleet_scope   # 指定車行名
+    # 單一車行（大豐），所有車輛皆在範圍內
+    return True
 
 
 def suggest_for_order(db: Session, order: Order, service_date: date,
@@ -79,8 +75,6 @@ def suggest_for_order(db: Session, order: Order, service_date: date,
 
     prm = settings_svc.dispatch_params(db)
     day_start, day_end = prm["day_start_sec"], prm["day_end_sec"]
-    own_region = dispatcher._region_of(order.fleet)
-
     duty = _candidate_vehicle_ids(db, service_date)
     vehicles = [v for v in db.scalars(
         select(Vehicle).where(Vehicle.id.in_(list(duty) or [-1]), Vehicle.active.is_(True))).all()
@@ -177,13 +171,12 @@ def suggest_for_order(db: Session, order: Order, service_date: date,
             reasons.append("無法路由")
 
         feasible = not reasons
-        is_own = dispatcher._region_of(v.home_fleet) == own_region
         cands.append({
             "vehicle_id": v.id,
             "plate": v.plate or f"#{v.id}",
             "fleet": v.home_fleet,
-            "is_own": is_own,
-            "is_support": (v.home_fleet or "") != (order.fleet or ""),
+            "is_own": True,   # 單一車行，所有車皆為本車行
+            "is_support": False,
             "type": v.type,
             "trip_count": len(by_veh.get(v.id, [])),
             "added_min": added_min,
@@ -193,9 +186,9 @@ def suggest_for_order(db: Session, order: Order, service_date: date,
             "reason": "、".join(reasons),
         })
 
-    # 排序:可行 → 本車行優先 → 無衝突 → 增加車程少 → 現有趟少(平衡)
+    # 排序:可行 → 無衝突 → 增加車程少 → 現有趟少(平衡)
     cands.sort(key=lambda c: (
-        not c["feasible"], not c["is_own"], c["conflict"], c["added_min"], c["trip_count"]
+        not c["feasible"], c["conflict"], c["added_min"], c["trip_count"]
     ))
     top = cands[:top_n]
     feasible_list = [c for c in top if c["feasible"]]

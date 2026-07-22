@@ -9,7 +9,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['close', 'assigned'])
 
-const scope = ref('own')                        // own | company
+const scope = ref('company')                    // 單一車行，固定使用全部車輛
 const data = ref(null)
 const loading = ref(false)
 const error = ref('')
@@ -49,9 +49,8 @@ async function adopt(c) {
   }
 }
 
-// 開啟(order 由 null→有值)或切換車隊範圍時重新載入
-watch(() => props.order, (o) => { if (o) { scope.value = 'own'; load() } }, { immediate: true })
-watch(scope, () => { if (props.order) load() })
+// 開啟(order 由 null→有值)時重新載入
+watch(() => props.order, (o) => { if (o) load() }, { immediate: true })
 </script>
 
 <template>
@@ -66,17 +65,12 @@ watch(scope, () => { if (props.order) load() })
         <div class="small mb-2">
           <b>{{ order.time || '' }} {{ order.passenger || '—' }}</b>
           <span class="text-muted">·{{ order.fleet || '未標車行' }}</span>
-          <span v-if="order.welfare" class="badge bg-warning text-dark ms-1">福</span>
+          <span v-if="order.welfare" class="badge bg-warning text-dark ms-1">⚕ 需福祉車</span>
+          <span v-else class="badge bg-secondary ms-1">一般車</span>
           <div class="text-muted" style="font-size:.78rem">{{ order.pickup }} → {{ order.dropoff }}</div>
         </div>
 
-        <!-- 切換車隊(候選範圍)-->
-        <div class="btn-group btn-group-sm w-100 mb-2" role="group">
-          <button type="button" class="btn" :class="scope === 'own' ? 'btn-primary' : 'btn-outline-primary'"
-                  @click="scope = 'own'">本車行 / 同區</button>
-          <button type="button" class="btn" :class="scope === 'company' ? 'btn-primary' : 'btn-outline-primary'"
-                  @click="scope = 'company'">全公司(含他隊支援)</button>
-        </div>
+        <!-- 單一車行大豐，不顯示車行切換 -->
 
         <div v-if="error" class="alert alert-danger py-1 px-2 small">{{ error }}</div>
         <div v-if="loading" class="text-center text-muted py-3 small">
@@ -88,7 +82,6 @@ watch(scope, () => { if (props.order) load() })
           <template v-else>
             <div class="small text-muted mb-1">
               候選 {{ data.candidate_count }} 台 · 直達約 {{ data.direct_min ?? '—' }} 分
-              <span v-if="scope === 'own'">（本車行不足時可切「全公司」找支援車）</span>
             </div>
             <div v-if="!allowAssign" class="alert alert-secondary py-1 px-2 small mb-1">
               🔎 唯讀建議：此為歷史/已完成單,僅供評估「是否真無法派遣」;實際指派請於營運日到派遣看板操作。
@@ -102,8 +95,7 @@ watch(scope, () => { if (props.order) load() })
                   <tr v-for="c in data.candidates" :key="c.vehicle_id" :class="{ 'table-light text-muted': !c.feasible }">
                     <td>
                       <b>{{ c.plate }}</b>
-                      <span v-if="c.is_own" class="badge bg-info text-dark ms-1">本車行</span>
-                      <span v-else class="badge bg-secondary ms-1">支援·{{ c.fleet || '?' }}</span>
+                      <span v-if="c.type === 'welfare'" class="badge bg-warning text-dark ms-1">福祉</span>
                       <div class="text-muted" style="font-size:.72rem">
                         {{ c.driver || '—' }}<span v-if="c.type === 'welfare'"> · 福祉車</span>
                       </div>
@@ -126,7 +118,7 @@ watch(scope, () => { if (props.order) load() })
                     </td>
                   </tr>
                   <tr v-if="!data.candidates.length"><td colspan="4" class="text-center text-muted py-3">
-                    此範圍無候選車，請切換到「全公司」。</td></tr>
+                    無候選車輛。</td></tr>
                 </tbody>
               </table>
             </div>

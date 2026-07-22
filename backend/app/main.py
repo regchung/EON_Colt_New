@@ -29,6 +29,7 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import SessionLocal
 from app.models.user import User
+from app.services import tdx_etag_collector
 
 
 @asynccontextmanager
@@ -48,7 +49,11 @@ async def lifespan(app: FastAPI):
         settings_svc.seed_defaults(db)
     finally:
         db.close()
+    # 啟動 TDX ETag 背景收集器
+    tdx_etag_collector.start()
     yield
+    # 關閉時停止收集器
+    tdx_etag_collector.stop()
 
 
 app = FastAPI(title=settings.PROJECT_NAME, lifespan=lifespan)

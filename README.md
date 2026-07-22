@@ -1,6 +1,6 @@
-# EON COLT — 預約制車隊自動派遣系統
+# DrFish — 預約制車隊自動派遣系統
 
-[![CI](https://github.com/regchung/EON_COLT/actions/workflows/ci.yml/badge.svg)](https://github.com/regchung/EON_COLT/actions/workflows/ci.yml)
+[![CI](https://github.com/regchung/DR_FISH/actions/workflows/ci.yml/badge.svg)](https://github.com/regchung/DR_FISH/actions/workflows/ci.yml)
 
 取代人工派遣的車隊調度系統。訂單來自車行**批次匯入的預約單**,車種分**福祉車**與**一般車**,
 支援**包車與共乘**,可**每日批次排班**並在當天**動態插單/取消重排**,並以地圖呈現每車路線。
@@ -152,7 +152,7 @@ MAP8_API_KEY=<你的 Map8 JWT>
 ## 專案結構
 
 ```
-EON_COLT/
+DR_FISH/
 ├── docker-compose.yml        # db / backend / frontend / osrm(profile)
 ├── Makefile                  # up/down/logs/migrate/psql/osrm-*
 ├── .env.example
@@ -234,7 +234,7 @@ EON_COLT/
 | `POST /roster/parse-attendance` · `/roster/apply-attendance` | 自然語言出勤解析(貼文字→班表例外) |
 | `POST /orders/import-doc?service_date=` · `POST /dispatch/assistant` | AI 文件智慧匯入 / 調度員 AI 助理 |
 
-> 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`pool_suggest.project_and_store()` 跑共乘增益投影(寫 `pool_projection`);`python3 scripts/make_report.py` 產生 `EON_COLT_對比報告.pdf`(含「共乘增益」一節)。
+> 對比批次與 PDF 報告:`comparison.run_batch()` 跑全車行×日;`pool_suggest.project_and_store()` 跑共乘增益投影(寫 `pool_projection`);`python3 scripts/make_report.py` 產生 `DR_FISH_對比報告.pdf`(含「共乘增益」一節)。
 
 ## 測試
 
@@ -290,8 +290,8 @@ CI 設定見 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
 ### 從 GitHub 取得並啟動
 ```bash
-git clone https://github.com/regchung/EON_COLT.git
-cd EON COLT
+git clone https://github.com/regchung/DR_FISH.git
+cd DrFish
 cp .env.example .env          # 填入 MAP8_API_KEY、改 SECRET_KEY 與管理員密碼
 docker compose up --build -d  # 起 db / backend / frontend
 make osrm-prepare && make osrm-up   # 準備並啟動路由引擎(排班/地圖需要)

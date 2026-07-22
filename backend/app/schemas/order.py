@@ -22,6 +22,21 @@ class OrderBase(BaseModel):
     need_wheelchair: bool = False
     allow_pool: bool = True
     note: str | None = None
+    payment_type: str | None = None    # subsidy=補助 / self=自費
+    order_nature: str | None = None    # 性質
+    customer_region: str | None = None # 客戶所在地區
+    eligibility: str | None = None     # 身份資格
+    mileage: float | None = None       # 里程
+    fare: int | None = None            # 車資
+    companion_fee: int | None = None   # 陪同金額
+    self_pay_amount: int | None = None # 自付金額
+    subsidy_balance: str | None = None  # 補助餘額
+    booking_source: str | None = None  # 預約方式(電話/LINE/L包/包月/候補/共乘)
+    id_number: str | None = None       # 身分證字號
+    dropoff_time: datetime | None = None  # 客下車時間
+    assigned_plate: str | None = None  # 車號文字(匯入留存)
+    driver_name: str | None = None     # 司機姓名
+    operator: str | None = None        # 填單人
     status: str = "imported"
     assigned_vehicle_id: int | None = None
 

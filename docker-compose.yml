@@ -1,3 +1,5 @@
+name: dr-fish
+
 services:
   db:
     image: postgres:16

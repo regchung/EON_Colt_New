@@ -4,19 +4,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    PROJECT_NAME: str = "EON COLT API"
+    PROJECT_NAME: str = "DrFish API"
     API_PREFIX: str = "/api"
 
-    DATABASE_URL: str = "postgresql+psycopg://eon_colt:eon_colt_pw@db:5432/eon_colt"
+    DATABASE_URL: str = "postgresql+psycopg://dr_fish:dr_fish_pw@db:5432/dr_fish"
     BACKEND_CORS_ORIGINS: str = "http://localhost:8080,http://localhost:5173"
 
     # 地理編碼 provider:'nominatim' | 'map8'
     GEOCODER_PROVIDER: str = "nominatim"
-    GEOCODE_BATCH_LIMIT: int = 50     # 單次批次地理編碼最多處理的訂單數
+    GEOCODE_BATCH_LIMIT: int = 2000   # 單次批次地理編碼最多處理的訂單數
 
     # Nominatim(OpenStreetMap,免費;台灣門牌覆蓋有限)
     NOMINATIM_URL: str = "https://nominatim.openstreetmap.org/search"
-    GEOCODER_USER_AGENT: str = "EON-COLT/0.1 (fleet dispatch)"
+    GEOCODER_USER_AGENT: str = "DR-FISH/0.1 (fleet dispatch)"
     GEOCODE_RATE_SLEEP: float = 1.1   # 每次實查後等待秒數,遵守 Nominatim 速率限制
 
     # 圖霸 Map8(台灣本土,門牌級;需金鑰)
@@ -46,10 +46,14 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin123"
 
+    # TDX 交通資料交換(即時路況)
+    TDX_CLIENT_ID: str = ""
+    TDX_CLIENT_SECRET: str = ""
+
     # Web Push(VAPID)— 司機端推播;金鑰只放 .env
     VAPID_PUBLIC_KEY: str = ""
     VAPID_PRIVATE_KEY: str = ""
-    VAPID_SUBJECT: str = "mailto:admin@eon-colt.local"
+    VAPID_SUBJECT: str = "mailto:admin@dr-fish.local"
 
     @property
     def push_enabled(self) -> bool:

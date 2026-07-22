@@ -17,6 +17,7 @@ class VehicleBase(BaseModel):
     end_lng: float | None = None
     end_lat: float | None = None
     home_fleet: str | None = None
+    district: str | None = None   # 指定服務地區;None=不限
     active: bool = True
     suspended: bool = False
 

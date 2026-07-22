@@ -28,7 +28,7 @@ async function submit() {
   <div class="d-flex align-items-center justify-content-center" style="min-height: 100vh; background: #f1f3f5;">
     <div class="card shadow-sm" style="width: 360px; max-width: 92vw;">
       <div class="card-body p-4">
-        <h4 class="text-center mb-1">🚖 EON COLT</h4>
+        <h4 class="text-center mb-1">🚖 DrFish</h4>
         <p class="text-center text-muted small mb-4">車隊派遣系統登入</p>
         <form @submit.prevent="submit">
           <div class="mb-3">

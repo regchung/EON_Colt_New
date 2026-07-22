@@ -27,7 +27,7 @@ class Order(Base):
     pickup_window_min: Mapped[int] = mapped_column(Integer, default=30)
 
     passenger_name: Mapped[str | None] = mapped_column(String(50))
-    passenger_phone: Mapped[str | None] = mapped_column(String(30))
+    passenger_phone: Mapped[str | None] = mapped_column(String(100))
 
     pickup_address: Mapped[str] = mapped_column(Text)
     pickup_lng: Mapped[float | None] = mapped_column(Float)
@@ -47,6 +47,10 @@ class Order(Base):
     pool_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 共乘同意時間(留痕)
     pool_consent_by: Mapped[str | None] = mapped_column(String(50))  # 徵詢/登錄者(行控)
     note: Mapped[str | None] = mapped_column(Text)
+    payment_type: Mapped[str | None] = mapped_column(String(10))   # subsidy=補助 / self=自費
+    order_nature: Mapped[str | None] = mapped_column(String(50))   # 性質(就醫/洗腎/復健…)
+    customer_region: Mapped[str | None] = mapped_column(String(50)) # 客戶所在地區
+    eligibility: Mapped[str | None] = mapped_column(String(100))   # 身份資格
 
     case_tag: Mapped[str | None] = mapped_column(Text)  # 個案/地標識別(乘客姓名+地址補充+醫療設施名稱)供固定行程匹配
     status: Mapped[str] = mapped_column(String(20), default="imported", index=True)
@@ -58,6 +62,21 @@ class Order(Base):
     # 跨車行支援留痕:本車行運能不足時,由他隊車支援;記錄出車車輛所屬車行 + 原因
     support_fleet: Mapped[str | None] = mapped_column(String(20))  # ≠ fleet 時表示他隊支援;None=本車行/未派
     dispatch_note: Mapped[str | None] = mapped_column(Text)        # 支援原因白話
+
+    # 費用欄位(來自大豐匯入)
+    mileage: Mapped[float | None] = mapped_column(Float)           # 里程(公里)
+    fare: Mapped[int | None] = mapped_column(Integer)              # 車資
+    companion_fee: Mapped[int | None] = mapped_column(Integer)     # 陪同金額
+    self_pay_amount: Mapped[int | None] = mapped_column(Integer)   # 自付金額
+    subsidy_balance: Mapped[str | None] = mapped_column(String(100)) # 補助餘額
+
+    # 大豐匯入擴充欄位
+    booking_source: Mapped[str | None] = mapped_column(String(30))  # 客戶/預約方式(電話/LINE/L包/包月/候補/共乘)
+    id_number: Mapped[str | None] = mapped_column(String(30))       # 身分證字號
+    dropoff_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))  # 客下車時間
+    assigned_plate: Mapped[str | None] = mapped_column(String(20))  # 車號文字(匯入留存)
+    driver_name: Mapped[str | None] = mapped_column(String(50))     # 司機姓名
+    operator: Mapped[str | None] = mapped_column(String(30))        # 填單人
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

@@ -120,7 +120,7 @@ def build_workbook(db: Session, service_date: date, fleet: str | None,
     # --- 總覽(兩種版型共用)---
     ws = wb.active
     ws.title = "總覽"
-    ws.append([f"EON COLT 派遣表 — {service_date.isoformat()}（{scope}）"])
+    ws.append([f"DrFish 派遣表 — {service_date.isoformat()}（{scope}）"])
     ws["A1"].font = _TITLE
     ws.append([])
     ws.append(["指標", "數值"])
