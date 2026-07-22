@@ -1,4 +1,4 @@
-# CLAUDE.md — EON COLT 專案記憶
+# CLAUDE.md — DrFish 專案記憶
 
 給 Claude Code 的專案脈絡。**啟動時先讀本檔**,再看 [`README.md`](README.md) 取完整說明。
 
@@ -66,7 +66,7 @@ docker compose exec backend python -m pytest -q   # 後端測試
    實證依據見 `docs/findings-chaining-2026-07-04.md`(含跨單併車指標更正:人工1.7% vs 自動0.0%,皆點對點)。
 
 ## 推送到 GitHub
-Repo:https://github.com/regchung/EON_COLT(remote `origin` 已設,乾淨 https URL)。
+Repo:https://github.com/regchung/DR_FISH(remote `origin` 已設,乾淨 https URL)。
 **建議用 `gh auth login`(web)**,之後 `git add -A && git commit && git push` 即可。
 切勿把 PAT 寫進指令/設定或提交。提交訊息結尾附:
 `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`

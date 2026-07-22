@@ -135,6 +135,129 @@ class AgentState:
     shift_end:   int | None   # 班表結束時間（秒）
     trip_count:  int = 0
     schedule:    list[int] = field(default_factory=list)
+    district:    str | None = None  # 指定服務地區；None = 不限制
+
+
+# ── 共乘組合 ─────────────────────────────────────────────────────────────
+
+class OrderBundle:
+    """同時段同目的地多乘客共乘包，duck-type Order 主要欄位。"""
+
+    def __init__(self, lead: "Order", riders: list["Order"], vehicle_type: str):
+        self.lead         = lead
+        self.riders       = riders      # 含 lead，依接送順序
+        self.vehicle_type = vehicle_type
+
+    # duck-type Order 讓 can_serve() / bid() 直接使用
+    @property
+    def id(self):              return self.lead.id
+    @property
+    def pickup_time(self):     return self.lead.pickup_time
+    @property
+    def pickup_lng(self):      return self.lead.pickup_lng
+    @property
+    def pickup_lat(self):      return self.lead.pickup_lat
+    @property
+    def dropoff_lng(self):     return self.lead.dropoff_lng
+    @property
+    def dropoff_lat(self):     return self.lead.dropoff_lat
+    @property
+    def pickup_address(self):  return self.lead.pickup_address
+    @property
+    def dropoff_address(self): return self.lead.dropoff_address
+
+    def __repr__(self):
+        return f"<Bundle lead={self.lead.id} riders={len(self.riders)}>"
+
+
+def _cluster_shared_rides(
+    orders: list["Order"],
+    opts: "OptFlags",
+    agent_districts: set[str],
+) -> "list":
+    """若 shared_ride_min > 0 且訂單在有地區車的地區，合併為 OrderBundle。
+
+    分群條件（AND）：
+      1. 兩訂單均在同一指定服務地區
+      2. pickup_time 差 ≤ shared_ride_min 分鐘
+      3. 目的地相距 ≤ shared_ride_km 公里
+      4. 起點相距 ≤ 2 公里（避免繞路過遠）
+    """
+    if opts.shared_ride_min <= 0 or not agent_districts:
+        return list(orders)
+
+    win_sec = opts.shared_ride_min * 60
+
+    # 計算每筆訂單屬於哪個地區（第一個匹配的）
+    def _order_district(o: "Order") -> str | None:
+        addr = (o.pickup_address or "") + (o.dropoff_address or "")
+        for d in agent_districts:
+            base = d.rstrip("區")
+            if d in addr or base in addr:
+                return d
+        return None
+
+    # 分桶：只處理地區訂單；其餘原樣保留
+    district_pool: dict[str, list["Order"]] = {}
+    solo: list = []
+    for o in orders:
+        d = _order_district(o)
+        if d:
+            district_pool.setdefault(d, []).append(o)
+        else:
+            solo.append(o)
+
+    result: list = list(solo)
+
+    for d, pool in district_pool.items():
+        pool.sort(key=lambda o: _to_sec(o.pickup_time) or 0)
+        used: set[int] = set()
+
+        for i, anchor in enumerate(pool):
+            if anchor.id in used:
+                continue
+            anchor_sec = _to_sec(anchor.pickup_time) or 0
+            group = [anchor]
+
+            for candidate in pool[i + 1:]:
+                if candidate.id in used:
+                    continue
+                cand_sec = _to_sec(candidate.pickup_time) or 0
+                if abs(cand_sec - anchor_sec) > win_sec:
+                    break  # pool 已排序，超時後全部不符
+
+                # 目的地距離
+                dist_drop = _haversine_m(
+                    anchor.dropoff_lng, anchor.dropoff_lat,
+                    candidate.dropoff_lng, candidate.dropoff_lat,
+                ) / 1000
+                if dist_drop > opts.shared_ride_km:
+                    continue
+
+                # 起點距離（限制繞路）
+                dist_pick = _haversine_m(
+                    anchor.pickup_lng, anchor.pickup_lat,
+                    candidate.pickup_lng, candidate.pickup_lat,
+                ) / 1000
+                if dist_pick > 2.0:
+                    continue
+
+                group.append(candidate)
+
+            for o in group:
+                used.add(o.id)
+
+            if len(group) == 1:
+                result.append(anchor)
+            else:
+                # 車種取最嚴（有 welfare 需求則整組用 welfare 車）
+                vt = ("welfare" if any(o.vehicle_type == "welfare" for o in group)
+                      else "normal")
+                # 以最早 pickup_time 的為 lead（pool 已排序）
+                result.append(OrderBundle(lead=group[0], riders=group, vehicle_type=vt))
+
+    result.sort(key=lambda x: _to_sec(x.pickup_time) or 0)
+    return result
 
 
 # ── Vehicle Agent ─────────────────────────────────────────────────────────
@@ -151,41 +274,49 @@ class VehicleAgent:
         self._opts     = opts or OptFlags()
         self._late_tol = late_tol_sec
 
-    # ── 規則：車種相容性 ──────────────────────────────────────────────────
+    # ── 規則：車種相容性 + 地區限制 ──────────────────────────────────────
     def can_serve(self, order: Order) -> bool:
         if order.vehicle_type == "welfare" and self.s.v_type == "normal":
             return False
+        # 若車輛指定服務地區，起點或終點其一需含地區名稱
+        # 相容：「坪林區」也匹配「坪林街/坪林路」等含「坪林」的地址
+        if self.s.district:
+            base = self.s.district.rstrip("區")  # "坪林區" → "坪林"
+            addr = (order.pickup_address or "") + (order.dropoff_address or "")
+            if not (self.s.district in addr or base in addr):
+                return False
         return True
 
-    # ── 出價 ──────────────────────────────────────────────────────────────
-    def bid(self, order: Order) -> float | None:
+    # ── 出價（支援 Order 和 OrderBundle）────────────────────────────────
+    def bid(self, item) -> float | None:
         """
         基礎出價 = 當下位置 → 訂單起點的 TDX 行程秒數。
+        OrderBundle：額外累加中途各接客點間距。
         硬性條件：不得遲到超過 late_tol_sec。
-        最佳化項目（依 OptFlags）：
-          ① welfare 車對 normal 訂單出價乘以護欄倍率
-          ② 對數負載均衡，防單車包攬所有訂單
+        ① welfare 護欄  ② 對數負載均衡
         """
-        if not self.can_serve(order):
+        lead = item.lead if isinstance(item, OrderBundle) else item
+
+        if not self.can_serve(lead):
             return None
 
-        # 每日趟次上限
         opts = self._opts
         max_trips = (opts.max_trips_welfare if self.s.v_type == "welfare"
                      else opts.max_trips_normal)
         if max_trips > 0 and self.s.trip_count >= max_trips:
             return None
 
-        pick_sec = _to_sec(order.pickup_time)
+        pick_sec = _to_sec(lead.pickup_time)
         if pick_sec is None:
             return None
 
         if self.s.shift_end and pick_sec > self.s.shift_end:
             return None
 
+        # 車輛 → 第一個接客點
         travel = self._osrm_travel(
             self.s.cur_lng, self.s.cur_lat,
-            order.pickup_lng, order.pickup_lat,
+            lead.pickup_lng, lead.pickup_lat,
             departure_sec=self.s.free_sec,
         )
         if travel >= _UNROUTABLE:
@@ -194,12 +325,29 @@ class VehicleAgent:
         if self.s.free_sec + travel - pick_sec > self._late_tol:
             return None
 
-        price = float(travel)
+        # 共乘中途繞路加時
+        extra_sec = 0
+        if isinstance(item, OrderBundle) and len(item.riders) > 1:
+            cur_lng, cur_lat = lead.pickup_lng, lead.pickup_lat
+            cur_sec = pick_sec
+            for rider in item.riders[1:]:
+                leg = self._osrm_travel(
+                    cur_lng, cur_lat,
+                    rider.pickup_lng, rider.pickup_lat,
+                    departure_sec=cur_sec,
+                )
+                if leg >= _UNROUTABLE:
+                    return None      # 中途有段無法路由則放棄
+                extra_sec += leg
+                cur_sec   += leg
+                cur_lng, cur_lat = rider.pickup_lng, rider.pickup_lat
+
+        price = float(travel + extra_sec)
 
         # ① 福祉車護欄
         if (opts.welfare_guard
                 and self.s.v_type == "welfare"
-                and order.vehicle_type == "normal"):
+                and lead.vehicle_type == "normal"):
             price *= opts.welfare_guard_mul
 
         # ② 對數負載均衡
@@ -208,23 +356,53 @@ class VehicleAgent:
 
         return price
 
-    # ── 得標後更新狀態 ────────────────────────────────────────────────────
-    def accept(self, order: Order) -> int:
-        """更新車輛狀態，回傳 dropoff_sec（送達時刻，秒）。"""
-        pick_sec = _to_sec(order.pickup_time) or self.s.free_sec
-        trip_sec = self._osrm_travel(
-            order.pickup_lng, order.pickup_lat,
-            order.dropoff_lng, order.dropoff_lat,
-            departure_sec=pick_sec,
-        )
-        raw_trip  = trip_sec if trip_sec < _UNROUTABLE else 3600
-        dropoff_sec = pick_sec + raw_trip
-        done_sec    = dropoff_sec + _SERVICE_BUF_SEC
-        self.s.cur_lng    = order.dropoff_lng
-        self.s.cur_lat    = order.dropoff_lat
+    # ── 得標後更新狀態（支援 Order 和 OrderBundle）───────────────────────
+    def accept(self, item) -> int:
+        """更新車輛狀態，回傳 dropoff_sec（送達時刻，秒）。
+        Bundle：逐站接客，最後一站出發送達目的地。
+        """
+        lead = item.lead if isinstance(item, OrderBundle) else item
+        pick_sec = _to_sec(lead.pickup_time) or self.s.free_sec
+
+        if isinstance(item, OrderBundle) and len(item.riders) > 1:
+            # 依序接客：lead → rider2 → rider3 → … → dropoff
+            cur_lng, cur_lat = lead.pickup_lng, lead.pickup_lat
+            cur_sec = pick_sec
+            for rider in item.riders[1:]:
+                leg = self._osrm_travel(
+                    cur_lng, cur_lat,
+                    rider.pickup_lng, rider.pickup_lat,
+                    departure_sec=cur_sec,
+                )
+                cur_sec += leg if leg < _UNROUTABLE else 0
+                cur_lng, cur_lat = rider.pickup_lng, rider.pickup_lat
+            # 最後一站 → 目的地
+            trip_sec = self._osrm_travel(
+                cur_lng, cur_lat,
+                lead.dropoff_lng, lead.dropoff_lat,
+                departure_sec=cur_sec,
+            )
+            dropoff_sec = cur_sec + (trip_sec if trip_sec < _UNROUTABLE else 3600)
+        else:
+            trip_sec    = self._osrm_travel(
+                lead.pickup_lng, lead.pickup_lat,
+                lead.dropoff_lng, lead.dropoff_lat,
+                departure_sec=pick_sec,
+            )
+            dropoff_sec = pick_sec + (trip_sec if trip_sec < _UNROUTABLE else 3600)
+
+        done_sec = dropoff_sec + _SERVICE_BUF_SEC
+        self.s.cur_lng    = lead.dropoff_lng
+        self.s.cur_lat    = lead.dropoff_lat
         self.s.free_sec   = done_sec
-        self.s.trip_count += 1
-        self.s.schedule.append(order.id)
+        self.s.trip_count += 1   # bundle 計為 1 趟（車次維度）
+
+        if isinstance(item, OrderBundle):
+            for r in item.riders:
+                self.s.schedule.append(r.id)
+        else:
+            self.s.schedule.append(lead.id)
+
         return dropoff_sec
 
     # ── OSRM + TDX 行程 ──────────────────────────────────────────────────
@@ -252,62 +430,66 @@ class VehicleAgent:
 # ── Sequential Time-Ordered Coordinator ──────────────────────────────────
 
 class AuctionCoordinator:
-    """按照訂單接送時間由早到晚逐筆競標。"""
-    def __init__(self, agents: list[VehicleAgent], orders: list[Order]):
+    """按照訂單接送時間由早到晚逐筆競標。
+    pool 可含 Order 或 OrderBundle（共乘組合）。
+    """
+    def __init__(self, agents: list[VehicleAgent], pool: list):
         self.agents = agents
-        self.pool   = sorted(orders, key=lambda o: _to_sec(o.pickup_time) or 0)
+        self.pool   = sorted(pool, key=lambda x: _to_sec(x.pickup_time) or 0)
 
     def run(self) -> tuple[list[dict], list[Order]]:
-        """
-        回傳 (assigned_list, unscheduled_list)。
-        """
-        assigned:     list[dict]  = []
-        unscheduled:  list[Order] = []
+        """回傳 (assigned_list, unscheduled_orders)。"""
+        assigned:    list[dict]  = []
+        unscheduled: list[Order] = []
 
-        for order in self.pool:
-            pick_sec = _to_sec(order.pickup_time)
+        for item in self.pool:
+            is_bundle = isinstance(item, OrderBundle)
+            lead      = item.lead if is_bundle else item
 
-            # 各車出價（在任務中的車 bid() 會因 free_sec 過晚而返回 None）
             offers: list[tuple[float, VehicleAgent]] = []
             for agent in self.agents:
-                price = agent.bid(order)
+                price = agent.bid(item)
                 if price is not None:
                     offers.append((price, agent))
 
             if not offers:
-                unscheduled.append(order)
+                # 整個 bundle 失敗 → 所有乘客列為未派
+                riders = item.riders if is_bundle else [item]
+                unscheduled.extend(riders)
                 continue
 
-            # 最低出價得標
             best_price, winner = min(offers, key=lambda x: x[0])
-            detour_km = round(
+            detour_km  = round(
                 _haversine_m(winner.s.cur_lng, winner.s.cur_lat,
-                             order.pickup_lng, order.pickup_lat) / 1000, 1
+                             lead.pickup_lng, lead.pickup_lat) / 1000, 1
             )
-            trip_no     = winner.s.trip_count + 1
-            dropoff_sec = winner.accept(order)   # 取得送達時刻（秒）
+            trip_no    = winner.s.trip_count + 1
+            dropoff_sec = winner.accept(item)
 
-            # 轉成帶時區 datetime（以 TW 零點為基準）
-            _midnight_tw = datetime.combine(
-                order.pickup_time.astimezone(TW).date() if order.pickup_time else datetime.now(TW).date(),
-                dtime(0), tzinfo=TW,
-            ) if True else None
-            dropoff_dt = (_midnight_tw + timedelta(seconds=dropoff_sec)) if _midnight_tw else None
+            # 計算送達 datetime
+            base_date = (lead.pickup_time.astimezone(TW).date()
+                         if lead.pickup_time else datetime.now(TW).date())
+            midnight_tw = datetime.combine(base_date, dtime(0), tzinfo=TW)
+            dropoff_dt  = midnight_tw + timedelta(seconds=dropoff_sec)
 
-            assigned.append({
-                "order_id":     order.id,
-                "passenger":    order.passenger_name,
-                "pickup_time":  (order.pickup_time.astimezone(TW).strftime("%H:%M")
-                                 if order.pickup_time else None),
-                "dropoff_sec":  dropoff_sec,
-                "dropoff_eta":  dropoff_dt.isoformat() if dropoff_dt else None,
-                "vehicle":      winner.s.plate,
-                "vehicle_plate": winner.s.plate,
-                "vehicle_type": winner.s.v_type,
-                "bid_score":    round(best_price, 1),
-                "trip_no":      trip_no,
-                "detour_km":    detour_km,
-            })
+            # 每位乘客各自產生一筆 assigned 記錄
+            riders = item.riders if is_bundle else [lead]
+            for rider in riders:
+                assigned.append({
+                    "order_id":     rider.id,
+                    "passenger":    rider.passenger_name,
+                    "pickup_time":  (rider.pickup_time.astimezone(TW).strftime("%H:%M")
+                                     if rider.pickup_time else None),
+                    "dropoff_sec":  dropoff_sec,
+                    "dropoff_eta":  dropoff_dt.isoformat(),
+                    "vehicle":      winner.s.plate,
+                    "vehicle_plate": winner.s.plate,
+                    "vehicle_type": winner.s.v_type,
+                    "bid_score":    round(best_price, 1),
+                    "trip_no":      trip_no,
+                    "detour_km":    detour_km,
+                    "shared_ride":  is_bundle,
+                })
 
         return assigned, unscheduled
 
@@ -466,6 +648,7 @@ def run(
             free_sec   = free_sec,
             shift_end  = shift_end_sec,
             trip_count = trip_count,
+            district   = v.district or None,
         ))
 
     # ── 5. 建 OSRM 矩陣（一次建好，所有 Agent 共用）─────────────────────
@@ -495,11 +678,15 @@ def run(
         for st in agent_states
     ]
 
-    # ── 7. 第一輪拍賣（正常容忍度）────────────────────────────────────────
-    coordinator = AuctionCoordinator(agents, orders)
+    # ── 7. 共乘預分群（shared_ride_min > 0 且有地區車時啟用）────────────
+    agent_districts = {st.district for st in agent_states if st.district}
+    auction_pool = _cluster_shared_rides(orders, opts, agent_districts)
+
+    # ── 8. 第一輪拍賣（正常容忍度）────────────────────────────────────────
+    coordinator = AuctionCoordinator(agents, auction_pool)
     assigned_list, remaining = coordinator.run()
 
-    # ── 7b. 第二輪補救（放寬遲到容忍度）─────────────────────────────────
+    # ── 8b. 第二輪補救（放寬遲到容忍度）─────────────────────────────────
     if opts.second_pass_min > 0 and remaining:
         second_tol = opts.second_pass_min * 60
         for ag in agents:
@@ -609,8 +796,21 @@ def _reason(o: Order, states: list[AgentState], vmap: dict) -> str:
     if need_welfare and not welfare_avail:
         return "無可用福祉車"
 
+    # 過濾地區限制：車輛若指定服務地區，只算「符合地區」的車
+    def _district_ok(st: AgentState) -> bool:
+        if not st.district:
+            return True
+        base = st.district.rstrip("區")
+        addr = (o.pickup_address or "") + (o.dropoff_address or "")
+        return st.district in addr or base in addr
+
+    eligible = [st for st in states if _district_ok(st)]
+    if not eligible:
+        # 有指定地區車輛存在，但沒有一台的地區與此訂單相符
+        return "無符合服務地區的車輛"
+
     in_time = [
-        st for st in states
+        st for st in eligible
         if (not need_welfare or st.v_type == "welfare")
         and (st.shift_end is None or (pick_sec or 0) <= st.shift_end)
     ]

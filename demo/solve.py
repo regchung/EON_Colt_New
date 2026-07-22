@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-EON COLT 派遣 demo（pyvroom 版,免 Docker / 免 OSRM）
+DrFish 派遣 demo（pyvroom 版,免 Docker / 免 OSRM）
 
 讀 matrix-mode.json 的「自帶 durations 矩陣 + shipments + skills + capacity + time_window」,
 呼叫 VROOM 引擎求解,印出每台車的派遣順序。
@@ -69,7 +69,7 @@ def main():
     sol = problem.solve(exploration_level=5, nb_threads=4)
 
     print("=" * 64)
-    print("EON COLT 派遣結果")
+    print("DrFish 派遣結果")
     print("=" * 64)
     print(f"未派遣訂單數 : {sol.summary.unassigned}")
     print(f"總行駛時間   : {hms(sol.summary.duration)}  ({sol.summary.duration}s)")
