@@ -24,9 +24,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.driver import Driver
-from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.order import Order
 from app.models.route import RouteStop
+from app.models.unassigned_record import UnassignedRecord
 from app.models.vehicle import Vehicle
 from app.services import fixed_route_match
 from app.services import matrix as matrix_svc
@@ -331,6 +331,7 @@ def _vehicles_with_driver(db: Session, service_date: date) -> set[int]:
     return ids
 
 
+
 def _first_coord(*pairs) -> tuple[float, float] | None:
     for lng, lat in pairs:
         if lng is not None and lat is not None:
@@ -366,7 +367,8 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             select(Order)
             .where(Order.service_date == service_date)
             .where(Order.status.in_(("imported", "scheduled")))
-            .where(Order.pickup_lng.is_not(None), Order.dropoff_lng.is_not(None))
+            .where(Order.pickup_lng.is_not(None), Order.pickup_lat.is_not(None),
+                   Order.dropoff_lng.is_not(None), Order.dropoff_lat.is_not(None))
             .order_by(Order.id)
         ).all()
     )
@@ -380,6 +382,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
         duty = {vid: (None, None) for (vid,) in db.execute(
             select(Vehicle.id).where(Vehicle.active.is_(True))).all()}
 
+    # 排除「停派」車輛(suspended)— 不納入自動派遣。
     susp_veh = {vid for (vid,) in db.execute(
         select(Vehicle.id).where(Vehicle.suspended.is_(True))).all()}
     if susp_veh:
@@ -388,6 +391,7 @@ def run_dispatch(db: Session, service_date: date) -> dict:
     driver_veh = _vehicles_with_driver(db, service_date)
     if driver_veh:
         duty = {vid: w for vid, w in duty.items() if vid in driver_veh}
+
 
     vehicles = list(
         db.scalars(
@@ -426,10 +430,15 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             ).all()
         )
 
-    # 固定行程
+    # 固定行程:把符合規則的訂單釘給指定司機的車(以唯一技能硬綁)。
+    # 指定車必須出現在出勤名冊(duty)中;未排班的車視為不可用,釘選取消、訂單退回一般排班。
     fr = fixed_route_match.match_for_date(db, service_date)
     pend_ids = {o.id for o in orders}
-    fixed_pins = {oid: vid for oid, vid in fr["pins"].items() if oid in pend_ids}
+    duty_vids = {v.id for v in vehicles}
+    fixed_pins = {
+        oid: vid for oid, vid in fr["pins"].items()
+        if oid in pend_ids and vid in duty_vids
+    }
     pin_vehicle_ids = set(fixed_pins.values())
     extra_pin = pin_vehicle_ids - {v.id for v in vehicles}
     if extra_pin:
@@ -458,11 +467,24 @@ def run_dispatch(db: Session, service_date: date) -> dict:
             points.append(key)
         return index[key]
 
+    # 無座標車輛的備用起點：當日上車點中心
+    fallback_coord: tuple[float, float] | None = None
+    if orders:
+        lngs = [o.pickup_lng for o in orders if o.pickup_lng]
+        lats = [o.pickup_lat for o in orders if o.pickup_lat]
+        if lngs:
+            fallback_coord = (sum(lngs)/len(lngs), sum(lats)/len(lats))
+
+    # 車輛出車起點 / 收車終點(start≠end);缺則退化到 depot，再缺用備用中心點
     veh_se: dict[int, tuple[int, int]] = {}
     for v in vehicles:
         s = _first_coord((v.start_lng, v.start_lat), (v.depot_lng, v.depot_lat))
+        if s is None and fallback_coord:
+            s = fallback_coord
         e = _first_coord((v.end_lng, v.end_lat), (v.start_lng, v.start_lat),
                          (v.depot_lng, v.depot_lat))
+        if e is None and fallback_coord:
+            e = fallback_coord
         if s is not None:
             si = pt_index(*s)
             ei = pt_index(*e) if e is not None else si
@@ -1166,6 +1188,53 @@ def run_dispatch(db: Session, service_date: date) -> dict:
 
     assigned_ids = {o.id for o in orders if o.assigned_vehicle_id is not None}
     unassigned = [o.id for o in orders if o.id not in assigned_ids]
+
+    # 第二階段(他隊支援 / 隔離補救):第一階段分群後仍有未派 → 當日回退統一池重排,
+    # 由公司其他車隊餘裕運能承接;統一池的指派數 ≥ 分群,保證不因分群漏單。
+    #  - cross_fleet_support 開:預設行為(本車行優先→他隊支援),並把支援單留痕。
+    #  - 舊 fleet_isolation + fallback:維持原補救語意。
+    # _isolation_override=None(outer)才觸發,避免無限遞迴。
+    trigger_second = (
+        outer_pass and apply_group and unassigned
+        and (support_on or (legacy_iso and prm.get("fleet_isolation_fallback")))
+    )
+    if trigger_second:
+        short_fleets = {by_id[oid].fleet for oid in unassigned if oid in by_id}  # 運能不足的車行
+        res = run_dispatch(db, service_date, _isolation_override=False)   # 統一池重排(權威結果)
+        supported = _label_cross_fleet_support(db, service_date, short_fleets)   # 標記他隊支援 + 原因
+        res["isolation_fallback"] = True
+        res["cross_fleet_support"] = support_on
+        res["supported"] = supported
+        res["supported_count"] = len(supported)
+        return res
+
+    # 寫入未派記錄(供「未派分析」頁查詢)
+    has_welfare_veh = any(v.type == "welfare" for v in vehicles)
+    db.query(UnassignedRecord).filter(UnassignedRecord.service_date == service_date).delete()
+    for oid in unassigned:
+        o = by_id.get(oid)
+        if not o:
+            continue
+        h = o.pickup_time.astimezone(TW).hour if o.pickup_time else 12
+        if h < day_start // 3600 or h >= day_end // 3600:
+            code, detail = "out_of_hours", "上車時間在服務時段外(06:00–18:00)"
+        elif o.pickup_lng is None or o.dropoff_lng is None:
+            code, detail = "no_coords", "缺少地址座標,無法地理編碼"
+        elif o.vehicle_type == "welfare" and not has_welfare_veh:
+            code, detail = "no_welfare", "需福祉車但當日無福祉車出勤"
+        elif o.vehicle_type == "welfare":
+            code, detail = "infeasible", "福祉車運能不足或時間窗衝突"
+        else:
+            code, detail = "infeasible", "車隊運能不足或時間窗衝突(需增派或重排)"
+        db.add(UnassignedRecord(
+            service_date=service_date,
+            fleet=o.fleet,
+            order_id=o.id,
+            source_order_no=o.source_order_no,
+            reason_code=code,
+            reason_detail=detail,
+        ))
+    db.commit()
 
     return {
         "service_date": service_date.isoformat(),

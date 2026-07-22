@@ -25,8 +25,10 @@ function logout() {
   router.push('/login')
 }
 
-const dsp = ['admin', 'dispatcher']
+const dsp   = ['admin', 'dispatcher']
+const admin = ['admin']
 const navGroups = [
+  // ── 操作區（車行調度員日常使用）──
   { group: '總覽', items: [
     { to: '/', label: '儀表板', icon: '📊', roles: null },
     { to: '/driver-route', label: '我的路單', icon: '🗒️', roles: ['driver'] },
@@ -34,6 +36,7 @@ const navGroups = [
   { group: '派遣作業', items: [
     { to: '/dispatch-board', label: '派遣看板', icon: '🧲', roles: dsp },
     { to: '/daily-tasks', label: '車輛任務口卡', icon: '🪪', roles: dsp },
+    { to: '/fixed-routes', label: '固定行程', icon: '📌', roles: dsp },
     { to: '/unassigned', label: '未派分析', icon: '⚠️', roles: dsp },
   ] },
   { group: '分析報表', items: [
@@ -45,14 +48,21 @@ const navGroups = [
     { to: '/orders', label: '訂單管理', icon: '📋', roles: dsp },
     { to: '/vehicles', label: '車輛管理', icon: '🚐', roles: dsp },
     { to: '/drivers', label: '司機管理', icon: '🧑‍✈️', roles: dsp },
-    { to: '/driver-vehicle', label: '司機車輛', icon: '🚗', roles: dsp },
     { to: '/daily-roster', label: '每日出勤名冊', icon: '📤', roles: dsp },
     { to: '/roster', label: '班表', icon: '📅', roles: dsp },
     { to: '/addresses', label: '地址簿', icon: '📍', roles: dsp },
   ] },
+  // ── 分析區（管理者/優化分析專用）──
+  { group: '派遣分析', items: [
+    { to: '/reports', label: '報表', icon: '📈', roles: admin },
+    { to: '/comparison', label: '人工 vs 自動', icon: '🆚', roles: admin },
+    { to: '/vehicle-comparison', label: '逐車對比', icon: '🚐', roles: admin },
+    { to: '/pool-suggest', label: '共乘優化', icon: '🤝', roles: admin },
+    { to: '/assistant', label: 'AI 助理', icon: '💬', roles: admin },
+  ] },
   { group: '系統', items: [
-    { to: '/users', label: '使用者管理', icon: '👥', roles: ['admin'] },
-    // { to: '/settings', label: '參數設定', icon: '⚙️', roles: ['admin'] },
+    { to: '/users', label: '使用者管理', icon: '👥', roles: admin },
+    { to: '/settings', label: '參數設定', icon: '⚙️', roles: admin },
   ] },
 ]
 

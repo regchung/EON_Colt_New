@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -34,6 +34,7 @@ from app.services import schedule_validator
 from app.services import unscheduled_assigner
 from app.services import conflict_resolver
 from app.services import agent_dispatcher
+from app.services import roster as roster_svc
 
 router = APIRouter(prefix="/dispatch", tags=["dispatch"])
 
@@ -177,11 +178,11 @@ def run_vroom(service_date: date, ai: bool = False, db: Session = Depends(get_db
 
 @router.get("/export")
 def export_dispatch(service_date: date, fleet: str | None = None, layout: str = "single",
-                    source: str = "auto", db: Session = Depends(get_db)):
-    """匯出某日派遣表(Excel)。fleet 空=全車行;layout=single|per_vehicle;
-    source=auto(自動派遣落地,客戶回饋用)|human(人工實際指派)。"""
+                    db: Session = Depends(get_db)):
+    """匯出某日派遣表(Excel)。fleet 空=全車行;layout=single|per_vehicle。
+    固定讀取 Order.assigned_vehicle_id（即時排班結果）。"""
     data = dispatch_export.build_workbook(
-        db, service_date, (fleet or None), per_vehicle=(layout == "per_vehicle"), source=source)
+        db, service_date, (fleet or None), per_vehicle=(layout == "per_vehicle"), source="human")
     suffix = "每車表" if layout == "per_vehicle" else "總表"
     stag = "自動" if source == "auto" else "人工"
     name = f"DR_FISH_{stag}派遣_{service_date.isoformat()}_{fleet or '全車行'}_{suffix}.xlsx"
@@ -544,6 +545,50 @@ def comparison_persist_day(service_date: date,
     if source == "run":
         return comparison.persist_day_from_run(db, service_date)
     return comparison.persist_day(db, service_date)
+
+
+# ── 非同步批次對比（分析區專用）──
+# 簡單的 in-process 狀態追蹤；重啟後清空，僅供當次 session 查詢。
+_batch_status: dict = {"running": False, "last_date": None, "last_result": None, "error": None}
+
+
+def _run_batch_bg(service_date: date):
+    """背景執行批次對比，結束後更新狀態。"""
+    from app.db.session import SessionLocal as _SL
+    _batch_status["running"] = True
+    _batch_status["error"] = None
+    try:
+        _db = _SL()
+        result = comparison.persist_day(_db, service_date)
+        _db.close()
+        _batch_status["last_result"] = result
+        _batch_status["last_date"] = service_date.isoformat()
+    except Exception as e:
+        _batch_status["error"] = str(e)
+    finally:
+        _batch_status["running"] = False
+
+
+@router.post("/comparison/run-async")
+def comparison_run_async(service_date: date, background_tasks: BackgroundTasks):
+    """非同步執行單日批次對比（不阻塞 API）。
+    立即回傳 202；用 GET /comparison/batch-status 查詢進度。"""
+    if _batch_status["running"]:
+        return {"accepted": False, "reason": "批次對比正在執行中，請稍後再試。"}
+    background_tasks.add_task(_run_batch_bg, service_date)
+    return {"accepted": True, "service_date": service_date.isoformat(),
+            "message": "批次對比已在背景啟動，請稍後查詢 /comparison/batch-status"}
+
+
+@router.get("/comparison/batch-status")
+def comparison_batch_status():
+    """查詢非同步批次對比的執行狀態。"""
+    return {
+        "running": _batch_status["running"],
+        "last_date": _batch_status["last_date"],
+        "last_result": _batch_status["last_result"],
+        "error": _batch_status["error"],
+    }
 
 
 @router.get("/auto-stops")
@@ -1000,30 +1045,37 @@ def board_meta(db: Session = Depends(get_db)):
 
 @router.get("/daily-tasks/meta")
 def daily_tasks_meta(db: Session = Depends(get_db)):
-    """口卡查詢的過濾選項:資料日期範圍 + 車行清單(供前端預設日期與下拉)。"""
-    mn, mx = db.execute(
+    """口卡查詢的過濾選項:資料日期範圍 + 車行清單(供前端預設日期與下拉)。
+    優先從 orders 取有排班資料的日期範圍；歷史資料(dispatch_history)作為補充。"""
+    # plan 模式：從 orders 取已排班日期
+    plan_mn, plan_mx = db.execute(
+        select(func.min(Order.service_date), func.max(Order.service_date))
+        .where(Order.assigned_vehicle_id.is_not(None))
+    ).one()
+    # history 模式：從 dispatch_history 取
+    hist_mn, hist_mx = db.execute(
         select(func.min(DispatchHistory.service_date), func.max(DispatchHistory.service_date))
         .where(DispatchHistory.status == _DT_SERVED)
     ).one()
-    fleets = [f for (f,) in db.execute(
-        select(DispatchHistory.fleet.distinct())
-        .where(DispatchHistory.fleet.is_not(None)).order_by(DispatchHistory.fleet)
-    ).all()]
+    mn = min(d for d in [plan_mn, hist_mn] if d) if any([plan_mn, hist_mn]) else None
+    mx = max(d for d in [plan_mx, hist_mx] if d) if any([plan_mx, hist_mx]) else None
+    # 車行：合併兩來源
+    plan_fleets = {f for (f,) in db.execute(
+        select(Order.fleet.distinct()).where(Order.fleet.is_not(None))).all()}
+    hist_fleets = {f for (f,) in db.execute(
+        select(DispatchHistory.fleet.distinct()).where(DispatchHistory.fleet.is_not(None))).all()}
+    fleets = sorted(plan_fleets | hist_fleets)
     return {"min_date": mn.isoformat() if mn else None,
             "max_date": mx.isoformat() if mx else None, "fleets": fleets}
 
 
 def _plan_drv_by_veh(db: Session, service_date: date) -> dict:
-    """車 → (司機名, 電話);Driver.vehicle_id 為底,當日 DriverVehicleAssignment 覆寫。"""
-    out: dict[int, tuple] = {}
-    for d in db.scalars(select(Driver).where(Driver.vehicle_id.is_not(None))).all():
-        out.setdefault(d.vehicle_id, (d.name, d.phone))
-    for a in db.scalars(select(DriverVehicleAssignment).where(
-            DriverVehicleAssignment.service_date == service_date)).all():
-        dn = db.get(Driver, a.driver_id)
-        if dn:
-            out[a.vehicle_id] = (dn.name, dn.phone)
-    return out
+    """車 → (司機名, 電話);從當日出勤名冊(ShiftException.driver_id)讀取。"""
+    return {
+        vid: (info["name"], info["phone"])
+        for vid, info in roster_svc.driver_for_date(db, service_date).items()
+        if info.get("name")
+    }
 
 
 def _plan_order_task(o: Order) -> dict:
@@ -1101,8 +1153,11 @@ def _plan_from_assigned(db: Session, service_date: date, fleet: str | None, plat
         plate_str = v.plate if v else f"#{o.assigned_vehicle_id}"
         fl = o.fleet or (v.home_fleet if v else None) or "(未標車行)"
         name, phone = drv.get(o.assigned_vehicle_id, (None, None))
+        is_welfare = v.type == "welfare" if v else False
         grouped.setdefault(fl, {}).setdefault(
-            plate_str, {"plate": plate_str, "driver": name, "driver_phone": phone, "tasks": []}
+            plate_str, {"plate": plate_str, "driver": name, "driver_phone": phone,
+                        "vehicle_type": v.type if v else "normal",
+                        "welfare": is_welfare, "tasks": []}
         )["tasks"].append(_plan_order_task(o))
     return _plan_cards_response(grouped, service_date, fleet, plate, len(orders), "plan")
 
@@ -1146,12 +1201,12 @@ def _plan_from_compute(db: Session, service_date: date, fleet: str | None, plate
 
 @router.get("/daily-tasks")
 def daily_tasks(service_date: date, fleet: str | None = None, plate: str | None = None,
-                source: str = "history", db: Session = Depends(get_db)):
+                source: str = "plan", db: Session = Depends(get_db)):
     """每日車輛任務清單(口卡):依車行 → 每台車 → 依上車時間排序的任務。
 
     source:
-      - history(預設):人工派遣紀錄(dispatch_history,僅成行)。
-      - plan:系統當前指派(orders.assigned_vehicle_id;含未來自動排班日)。
+      - plan(預設):系統當前指派(orders.assigned_vehicle_id;含未來自動排班日)。
+      - history:人工派遣紀錄(dispatch_history,僅成行)。
     乘客姓名/電話由訂單關聯。可依日期(必填)、車行、車牌過濾。
     """
     if source == "plan":

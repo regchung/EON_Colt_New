@@ -16,8 +16,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.order import Order
-from app.models.driver import Driver
-from app.models.driver_vehicle_assignment import DriverVehicleAssignment
 from app.models.vehicle import Vehicle
 from app.services import dispatcher
 from app.services import matrix as matrix_svc
@@ -37,28 +35,21 @@ def _mins(dt) -> int | None:
 
 
 def _driver_by_veh(db: Session, service_date: date) -> dict[int, str]:
-    out: dict[int, str] = {}
-    for d in db.scalars(select(Driver).where(Driver.vehicle_id.is_not(None))).all():
-        out.setdefault(d.vehicle_id, d.name)
-    for a in db.scalars(select(DriverVehicleAssignment).where(
-            DriverVehicleAssignment.service_date == service_date)).all():
-        dn = db.get(Driver, a.driver_id)
-        if dn:
-            out[a.vehicle_id] = dn.name
-    return out
+    return {
+        vid: info["name"]
+        for vid, info in roster_svc.driver_for_date(db, service_date).items()
+        if info.get("name")
+    }
 
 
 def _candidate_vehicle_ids(db: Session, service_date: date) -> dict[int, tuple]:
-    """當天可派候選車(有司機、未停派、出勤);沿用自動派遣的過濾原則。"""
+    """當天可派候選車(出勤名冊、未停派);沿用自動派遣的過濾原則。"""
     duty = roster_svc.available_vehicles(db, service_date)
-    if not duty:   # 未建班表 → 全 active 車(仍受停派/司機過濾)
-        duty = {vid: (None, None) for (vid,) in db.execute(
-            select(Vehicle.id).where(Vehicle.active.is_(True))).all()}
+    if not duty:
+        return {}
     susp = {vid for (vid,) in db.execute(
         select(Vehicle.id).where(Vehicle.suspended.is_(True))).all()}
-    driver_veh = dispatcher._vehicles_with_driver(db, service_date)
-    return {vid: w for vid, w in duty.items()
-            if vid not in susp and (not driver_veh or vid in driver_veh)}
+    return {vid: w for vid, w in duty.items() if vid not in susp}
 
 
 def _in_scope(v: Vehicle, order: Order, fleet_scope: str | None) -> bool:

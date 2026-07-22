@@ -45,7 +45,7 @@
 | **未派分析 + 行控回饋** | 系統無法排入的訂單依日歸類,顯示推斷原因 + 人工當時用哪台車;行控可填實際因素協助學習(`unassigned_record`) |
 | **未派回饋學習建議** | 聚合未派原因×回饋 → 規則式改善建議 + Claude 白話方案(放寬時段/上車窗、增福祉車、推共乘) |
 | **固定行程指定司機** | 規則(地點關鍵字/乘客姓名 + 早午晚時段)→ 派遣時以技能硬綁指定司機的車;CRUD + 某日比對預覽 |
-| **司機↔車對應** | 司機車輛對應、補無車司機、**當日輪車指派**(`driver_resolve`);供休假/固定行程/口卡共用 |
+| **每日出勤名冊** | 匯入每日 Excel 出勤表 → `shift_exception` 同時記錄出勤車輛與駕駛司機(`driver_id`);看板/報表/口卡司機顯示皆從此讀取 |
 | **自然語言出勤解析** | 貼「休3人:…」「某司機8-11不排」→ Claude 解析 → 自動產生班表例外(`/roster/parse-attendance`) |
 | **拖放派遣看板** | 各車欄位拖放訂單卡重新指派/卸載,時間衝突即時標紅(`/dispatch/board`) |
 | CI | GitHub Actions:後端 pytest(postgres)、前端 build、Docker 映像建置 |
@@ -124,11 +124,13 @@ MAP8_API_KEY=<你的 Map8 JWT>
 ## 操作流程(每日營運)
 
 1. **登入** → 進入後台。
-2. **車輛 / 司機** 建檔(車種、座位、班別、出車點)。
-3. **訂單管理 → 批次匯入** 車行 Excel/CSV(自動地理編碼);或手動新增。
-4. **🚀 一鍵排班**(選日期)→ VROOM 產生每車派遣順序與 ETA,寫回訂單。
-5. **🗺️ 路線地圖** 檢視每車實際路線。
-6. 當天有變動:訂單**取消**或標記**開始/完成**,再按一次排班即重排(鎖定進行中)。
+2. **車輛 / 司機** 建檔(車種、座位、車型、出車起訖點)。— 一次性設定，不常更動。
+3. **每日出勤名冊匯入**(`班表 → 每日出勤名冊`)：匯入當日出勤 Excel，系統同時記錄出勤車輛與駕駛司機。**必須先匯入名冊，才能執行排班**（未建名冊直接拒絕）。
+4. **訂單管理 → 批次匯入** 車行 Excel/CSV（自動地理編碼）；或手動新增。
+5. **🚀 一鍵排班**（選日期）→ VROOM 依名冊出勤車輛最佳化派遣，寫回訂單與路線。
+6. **🗺️ 路線地圖** / **派遣看板** 檢視每車路線與司機。
+7. 當天有變動：訂單**取消**或標記**開始/完成**，再按一次排班即重排（鎖定進行中）。
+8. **📊 派遣表匯出** → Excel 自動帶入出勤名冊的司機姓名。
 
 ---
 
@@ -185,7 +187,13 @@ DR_FISH/
 - `address_point`：校正後地址(唯一)+ 座標 + 精度 + 行政區 + 來源
 - `address_alias`：原始描述 → 門牌(NULL = 查無快取)
 - `route_stop`：排班產生的每車停靠序列(供地圖/路單)
+- `shift_exception`：每日出勤名冊；`vehicle_id`（哪台車出勤）+ `driver_id`（誰開）+ 班別時段；**司機-車輛的每日唯一對應來源**
+- `shift_pattern`：週期班表（常態上班日 weekday）
+- `unassigned_record`：排班後自動寫入未派訂單原因碼，供「未派分析」頁查詢
 - `users`：帳號 + PBKDF2 雜湊密碼
+
+> **架構說明（2026-07-10）**：`drivers` 表不再有 `vehicle_id` 欄位；司機「今天開哪台車」
+> 完全由 `shift_exception.driver_id` 決定。看板、報表、口卡、建議車輛皆統一讀此來源。
 
 ---
 
@@ -223,14 +231,14 @@ DR_FISH/
 | `GET /dispatch/pool-gain` | 共乘增益總覽(讀 `pool_projection`):現況→共乘後車日 + 額外省幅,供對比頁/報表 |
 | `GET /dispatch/driver-suggest?passenger=` · `GET /dispatch/driver-loyalty` | 常客固定駕駛:乘客→慣用駕駛建議 / 高忠誠乘客清單(軟性偏好) |
 | `GET/POST /settings` · `PUT/DELETE /settings/{key}` | 系統參數設定 CRUD(**限系統管理者**);即時派遣讀取營運參數 |
-| `GET /roster/availability?service_date=` · `GET/PUT /roster/patterns` · `/roster/exceptions` · `POST /roster/seed-from-history` · `POST /roster/apply-forecast?fleet=&dry_run=` | 班表:當日出勤查詢 / 週期班表(含班別時段)/ 例外 / 歷史回推 / **一鍵套用建議排車數** |
+| `GET /roster/availability?service_date=` · `GET/PUT /roster/patterns` · `/roster/exceptions` · `POST /roster/seed-from-history` · `POST /roster/apply-forecast?fleet=&dry_run=` | 班表:當日出勤查詢(含 driver_id)/ 週期班表(含班別時段)/ 例外 / 歷史回推 / **一鍵套用建議排車數** |
 | `GET /dispatch/demand-forecast?fleet=&horizon_days=&lookback_weeks=` | 輕量需求預測(weekday 基線):各日趟次 + 建議排車數 |
 | `GET /dispatch/daily-tasks?service_date=&fleet=&plate=` · `/daily-tasks/meta` | 車輛任務口卡(依車行→每車→時間) |
 | `GET /dispatch/unassigned/dates` · `/unassigned?service_date=` · `/unassigned/{id}` · `POST /unassigned/{id}/feedback` | 未派分析:依日清單 / 某日明細 / 單筆(原因+人工車)/ 行控回饋 |
 | `GET /dispatch/unassigned/insights?fleet=&ai=` | 未派回饋學習建議(規則 + Claude 白話方案) |
 | `GET /dispatch/board?service_date=` · `POST /orders/{id}/assign` · `/orders/{id}/unassign` | 派遣看板(各車趟次+衝突)/ 拖放指派 / 卸載 |
 | `… /fixed-routes`(CRUD)· `GET /fixed-routes/match?service_date=` | 固定行程指定司機(地點/姓名規則)/ 某日比對預覽 |
-| `GET /driver-vehicle` · `POST /driver-vehicle/{id}/assign` · `/create-driver` · `/daily` | 司機↔車對應 / 指派或建車 / 補司機 / 當日輪車 |
+| `GET /dispatch/export?service_date=&layout=single\|per_vehicle` | 派遣表 Excel 匯出(司機名稱從出勤名冊讀取) |
 | `POST /roster/parse-attendance` · `/roster/apply-attendance` | 自然語言出勤解析(貼文字→班表例外) |
 | `POST /orders/import-doc?service_date=` · `POST /dispatch/assistant` | AI 文件智慧匯入 / 調度員 AI 助理 |
 
@@ -267,14 +275,15 @@ CI 設定見 [`.github/workflows/ci.yml`](.github/workflows/ci.yml)。
 
 ## 疑難排解
 
-- **排班回 502 / OSRM not ready**:先 `make osrm-prepare` 再 `make osrm-up`;`GET /api/dispatch/osrm-health` 應為 `ready:true`。
-- **訂單未派(unassigned)**:多為超出車輛班別、座位不足、時間窗不可行,或尚未地理編碼(📍 顯示 ⚠️)。
-- **登入後仍 401**:Token 過期重登;或確認 `SECRET_KEY` 未變更(變更會使既有 token 失效)。
-- **改密碼不生效**:種子只在「無任何使用者」時執行;改 `.env` 後需清空 `users` 表再重啟。
-- **下載/檔案類功能失敗(401)**:API 受 JWT 保護,純 `<a href>` 或開新分頁**不會帶 token**。
-  下載一律走 axios 取 blob 再觸發(見「下載範本」`downloadTemplate`)。
-- **改了前端卻沒變化**:前端為建置後的靜態檔,改動需 `docker compose up -d --build frontend`,
-  瀏覽器再**強制重新整理**(`Cmd/Ctrl+Shift+R`)。
+- **排班回「該日無出勤車輛」**：出勤名冊未匯入；先至「班表」頁匯入當日出勤 Excel，再執行排班。
+- **排班回 502 / OSRM not ready**：先 `make osrm-prepare` 再 `make osrm-up`；`GET /api/dispatch/osrm-health` 應為 `ready:true`。
+- **訂單未派(unassigned)**：多為出勤車輛運能不足、福祉車額滿、時間窗衝突；詳見「未派分析」頁原因說明。
+- **派遣報表司機欄位空白**：出勤名冊的 `driver_id` 未對應；確認 Excel 中的司機姓名與系統司機主檔一致。
+- **固定行程未釘選（unresolved）**：指定司機當日不在出勤名冊或名冊無 `driver_id`；補匯入名冊後重排。
+- **登入後仍 401**：Token 過期重登；或確認 `SECRET_KEY` 未變更（變更會使既有 token 失效）。
+- **改密碼不生效**：種子只在「無任何使用者」時執行；改 `.env` 後需清空 `users` 表再重啟。
+- **下載/檔案類功能失敗(401)**：API 受 JWT 保護，純 `<a href>` 或開新分頁**不會帶 token**。下載一律走 axios 取 blob 再觸發。
+- **改了前端卻沒變化**：前端為建置後靜態檔，改動需 `docker compose up -d --build frontend`，瀏覽器再**強制重新整理**（`Cmd/Ctrl+Shift+R`）。
 
 ## 前端開發注意
 
